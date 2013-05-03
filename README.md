@@ -12,20 +12,28 @@ from the client.
 Installation
 ============
 
-<pre>
- ./Build.PL
- ./Build test
- sudo ./Build install
+Run the following commands from within the top-level directory of this
+distribution:
+
+ <pre> 
+ $ ./Build.PL ./Build test sudo ./Build install 
 </pre>
 
 If you get messages about missing dependencies, run:
 
 <pre>
- ./Build installdeps
+ $ ./Build installdeps
 </pre>
 
+and then "sudo ./Build install".
+
 Your Perl must have been compiled with IThreads in order for this
-script to work.
+script to work. To check if this is the case. you may run:
+
+<pre>
+ <b>$ perl -V | grep useithreads</b>
+    useithreads=define, usemultiplicity=define
+</pre>
 
 Usage
 =====
