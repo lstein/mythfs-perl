@@ -16,7 +16,9 @@ Run the following commands from within the top-level directory of this
 distribution:
 
  <pre> 
- $ ./Build.PL ./Build test sudo ./Build install 
+ $ <b>./Build.PL</b>
+ $ <b>./Build test</b>
+ $ <b>sudo ./Build install</b>
 </pre>
 
 If you get messages about missing dependencies, run:
