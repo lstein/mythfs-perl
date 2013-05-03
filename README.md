@@ -16,6 +16,8 @@ Run the following commands from within the top-level directory of this
 distribution:
 
  <pre> 
+ $ <b> git clone git://github.com/lstein/mythfs-perl.git
+ $ <b>cd mythfs-perl</b>
  $ <b>./Build.PL</b>
  $ <b>./Build test</b>
  $ <b>sudo ./Build install</b>
