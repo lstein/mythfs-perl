@@ -13,7 +13,7 @@ our $VERSION = '1.00';
 
 my %Cache :shared;
 my $Time = time();
-my @FuseOptions;
+my (@FuseOptions,$Debug);
 
 my $Usage = <<END;
 Usage: $0 <Myth Master Host> <mountpoint>
@@ -24,11 +24,14 @@ Options:
    -o fsname=name          set filesystem name
    -o use_ino              let filesystem set inode numbers
    -o nonempty             allow mounts over non-empty file/dir
+   -d                      trace FUSE operations
 END
 
     ;
 
-GetOptions('option:s' => \@FuseOptions) or die $Usage;
+GetOptions('option:s' => \@FuseOptions,
+	   'debug'    => \$Debug,
+    ) or die $Usage;
 
 my $Host       = shift or die $Usage;
 my $mountpoint = shift or die $Usage;
@@ -44,7 +47,7 @@ Fuse::main(mountpoint => $mountpoint,
 	   open       => 'main::e_open',
 	   read       => 'main::e_read',
 	   mountopts  => $options,
-	   debug => 0,
+	   debug      => $Debug||0,
 	   threaded   => 1,
     );
 
