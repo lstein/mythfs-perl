@@ -24,7 +24,7 @@ distribution:
 If you get messages about missing dependencies, run:
 
 <pre>
- $ ./Build installdeps
+ $ <b>./Build installdeps</b>
 </pre>
 
 and then "sudo ./Build install".
@@ -44,7 +44,7 @@ To mount the recordings contained on the master backend "MyHost" onto
 a local filesystem named "/tmp/mythfs" use this command:
 
 <pre>
- mythfs.pl MyHost /tmp/mythfs
+ $ <b>mythfs.pl MyHost /tmp/mythfs</b>
 </pre>
 
 The script will fork into the background and should be stopped with
@@ -56,7 +56,7 @@ will be placed into the top level of the directory.
 To unmount:
 
 <pre>
- fusermount -u /tmp/mythfs
+ $ <b>fusermount -u /tmp/mythfs</b>
 </pre>
 
 Note do NOT try to kill the mythfs.pl process. This will only cause a
