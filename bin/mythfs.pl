@@ -206,7 +206,7 @@ sub _build_directory_map {
     my $ok_chars = 'a-zA-Z0-9_.&@:* ^![]{}(),?#\$=+%-';
 
     my $count = 0;
-    my %recordings;
+    my (%recordings,%paths);
     for my $r (@{$rec->{Programs}{Program}}) {
 	$count++;
 
@@ -218,20 +218,16 @@ sub _build_directory_map {
 	my $path                = join('/',map {s/[^$ok_chars]/_/g;$_} @path);
 	$recordings{$key}{path}{$path}++;
 	$recordings{$key}{meta} = $r;
+	$paths{$path}{$key}++;
     }
     
-    # fixup path names so that they are unique; we do this by adding the Channel and StartTime to each
-    my %fixup;
-    for my $key (keys %recordings) {
-	next unless keys %{$recordings{$key}{path}} > 1;  # nonunique path
-	my ($path) = keys %{$recordings{$key}{path}};
-	$fixup{$path}{$key}++;
-    }
-
     # paths that need fixing to be unique
-    for my $path (keys %fixup) {
+    for my $path (keys %paths) {
+	my @keys = keys %{$paths{$path}};
+	next unless @keys > 1;
+
+	warn "fixing up $path";
 	my $count = 0;
-	my @keys  = keys %{$fixup{$path}};
 	for my $key (@keys) {
 	    my $fixed_path = sprintf("%s-%s_%s",
 				     $path,
