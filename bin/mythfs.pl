@@ -44,6 +44,8 @@ my $options = join(',',@FuseOptions,'ro');
 
 become_daemon() unless $NoDaemon;
 
+start_update_thread();
+
 Fuse::main(mountpoint => $mountpoint,
 	   getdir     => 'main::e_getdir',
 	   getattr    => 'main::e_getattr',
@@ -62,6 +64,17 @@ sub become_daemon {
     setsid();
     open STDIN,"</dev/null";
     fork() && exit 0;
+}
+
+sub start_update_thread {
+    my $thr = threads->create(
+	sub {
+	    print  STDERR scalar(localtime())," Update_thread...";
+	    Recorded->get_recorded;
+	    sleep (60*10);
+	}
+	);
+    $thr->detach();
 }
 
 sub fixup {
@@ -226,7 +239,6 @@ sub _build_directory_map {
 	my @keys = keys %{$paths{$path}};
 	next unless @keys > 1;
 
-	warn "fixing up $path";
 	my $count = 0;
 	for my $key (@keys) {
 	    my $fixed_path = sprintf("%s-%s_%s",
@@ -282,6 +294,6 @@ sub _build_directory_map {
 	$map->{directories}{$dir}{$filename}++;
     }
 
-    warn Dumper($map);
+    print STDERR scalar keys %recordings," recordings retrieved\n";
     return $map;
 }
