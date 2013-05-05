@@ -69,9 +69,11 @@ sub become_daemon {
 sub start_update_thread {
     my $thr = threads->create(
 	sub {
-	    print  STDERR scalar(localtime())," Update_thread...";
-	    Recorded->get_recorded;
-	    sleep (60*10);
+	    while (1) {
+		print  STDERR scalar(localtime())," Update_thread...";
+		Recorded->_refresh_recorded;
+		sleep (CACHE_TIME);
+	    }
 	}
 	);
     $thr->detach();
@@ -94,10 +96,11 @@ sub e_open {
 sub e_read {
     my ($path,$size,$offset) = @_;
 
+
     $offset ||= 0;
 
     $path = fixup($path);
-    my $r = Recorded->get_recorded;
+    my $r = Recorded->get_recorded('use_cached');
     return -ENOENT() unless $r->{paths}{$path};
     return -EINVAL() if $offset > $r->{paths}{$path}{length};
 
@@ -158,23 +161,13 @@ my $cache;
 
 sub get_recorded {
     my $self = shift;
+    my $nocache = shift;
 
-    return $cache if $cache && time() - $cache->{mtime} < CACHE_TIME;
-
-    $cache = eval ($Cache{recorded}||'');
-    return $cache if $cache && time() - $cache->{mtime} < CACHE_TIME;
+    return $cache if $cache && $nocache;
+    return $cache if $cache && time() - $Cache{mtime} < CACHE_TIME;
 
     lock %Cache;
-    $cache = eval ($Cache{recorded}||'');
-    return $cache if $cache && time() - $cache->{mtime} < CACHE_TIME;
-
-    my $result = $self->_get_recorded;
-    $result->{mtime} = time();
-
-    local $Data::Dumper::Terse = 1;
-    $Cache{recorded} = Data::Dumper->Dump([$result]);
-
-    return $cache = $result;
+    return $cache = eval ($Cache{recorded}||'');
 }
 
 sub recording2path {
@@ -185,7 +178,7 @@ sub recording2path {
     return $subtitle ? ($title,$subtitle) : ($title);  # could be more sophisticated
 }
 
-sub _get_recorded {
+sub _refresh_recorded {
     my $self = shift;
 
     local $SIG{CHLD} = 'IGNORE';
@@ -209,7 +202,10 @@ sub _get_recorded {
 
     my $rec = $parser->XMLin($fh);
     $self->_build_directory_map($rec,$var);
-    return $var;
+
+    local $Data::Dumper::Terse = 1;
+    $Cache{recorded} = Data::Dumper->Dump([$var]);
+    $Cache{mtime}    = time();
 }
 
 sub _build_directory_map {
