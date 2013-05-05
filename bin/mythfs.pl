@@ -11,6 +11,7 @@ use LWP::UserAgent;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
 our $VERSION = '1.00';
+use constant CACHE_TIME => 60*10;  
 
 my %Cache :shared;
 my $Time = time();
@@ -156,7 +157,6 @@ use Data::Dumper 'Dumper';
 
 # cache entries for 10 minutes
 # this means that new recordings won't show up in the file system for up to this long
-use constant CACHE_TIME => 60*10;  
 my $cache;
 
 sub get_recorded {
@@ -164,7 +164,7 @@ sub get_recorded {
     my $nocache = shift;
 
     return $cache if $cache && $nocache;
-    return $cache if $cache && time() - $Cache{mtime} < CACHE_TIME;
+    return $cache if $cache && time() - $Cache{mtime} < main::CACHE_TIME();
 
     lock %Cache;
     return $cache = eval ($Cache{recorded}||'');
