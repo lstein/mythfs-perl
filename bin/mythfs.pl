@@ -85,11 +85,11 @@ sub e_read {
 
     $path = fixup($path);
     my $r = Recorded->get_recorded;
-    return -ENOENT() unless $r->{r}{$path};
-    return -EINVAL() if $offset > $r->{r}{$path}{length};
+    return -ENOENT() unless $r->{paths}{$path};
+    return -EINVAL() if $offset > $r->{paths}{$path}{length};
 
-    my $basename = $r->{r}{$path}{basename};
-    my $sg       = $r->{r}{$path}{storage};
+    my $basename = $r->{paths}{$path}{basename};
+    my $sg       = $r->{paths}{$path}{storage};
     my $byterange= $offset.'-'.($offset+$size-1);
 
     my $ua = LWP::UserAgent->new;
