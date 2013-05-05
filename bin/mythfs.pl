@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
 use strict;
+use warnings;
 use threads;
 use threads::shared;
 use Getopt::Long;
@@ -13,12 +14,13 @@ our $VERSION = '1.00';
 
 my %Cache :shared;
 my $Time = time();
-my (@FuseOptions,$Debug);
+my (@FuseOptions,$Debug,$NoDaemon);
 
 my $Usage = <<END;
 Usage: $0 <Myth Master Host> <mountpoint>
 
 Options:
+   -f                      remain in foreground
    -o allow_other          allow other accounts to access filesystem
    -o default_permissions  enable permission checking by kernel
    -o fsname=name          set filesystem name
@@ -29,8 +31,9 @@ END
 
     ;
 
-GetOptions('option:s' => \@FuseOptions,
-	   'debug'    => \$Debug,
+GetOptions('option:s'   => \@FuseOptions,
+	   'foreground' => \$NoDaemon,
+	   'debug'      => \$Debug,
     ) or die $Usage;
 
 my $Host       = shift or die $Usage;
@@ -39,7 +42,7 @@ $mountpoint    = File::Spec->rel2abs($mountpoint);
 
 my $options = join(',',@FuseOptions,'ro');
 
-become_daemon();
+become_daemon() unless $NoDaemon;
 
 Fuse::main(mountpoint => $mountpoint,
 	   getdir     => 'main::e_getdir',
@@ -64,15 +67,14 @@ sub become_daemon {
 sub fixup {
     my $path = shift;
     $path =~ s!^/!!;
-    $path =~ s/\.mpg$//;
     $path;
 }
 
 sub e_open {
     my $path = fixup(shift);
     my $r = Recorded->get_recorded;
-    return -ENOENT() unless $r->{r}{$path} || $r->{d}{$path};
-    return -EISDIR() if Recorded->isdir($path);
+    return -ENOENT() unless $r->{paths}{$path} || $r->{directories}{$path};
+    return -EISDIR() if $r->{directories}{$path};
     return 0;
 }
 
@@ -101,10 +103,8 @@ sub e_getdir {
     my $path = fixup(shift) || '.';
 
     my $r = Recorded->get_recorded;
-    return ('.','..', map {$r->{r}{$_}{display}||$_} keys %{$r->{d}},0)    if $path eq '.';
-    my ($title,$subtitle) = split '/',$path;
-    $r->{d}{$title} or return -ENOENT();
-    my @entries = map {$r->{r}{"$title/$_"}{display}} grep {length $_} keys %{$r->{d}{$title}};
+    my @entries = keys %{$r->{directories}{$path}};
+    return -ENOENT() unless @entries;
     return ('.','..',@entries,0);
 }
 
@@ -116,16 +116,16 @@ sub e_getattr {
 	= (0,0,0,1,@{$context}{'gid','uid'},1,1024);
 
     my $r = Recorded->get_recorded;
-    $path eq '.' || exists $r->{r}{$path} || exists $r->{d}{$path} || return -ENOENT();
+    my $e = $r->{paths}{$path} or return -ENOENT();
 
-    my $isdir = $path eq '.' || Recorded->isdir($path);
+    my $isdir = $e->{type} eq 'directory';
+
     my $mode = $isdir ? 0040000|0555 : 0100000|0444;
 
-    my $time = $r->{r}{$path}{mtime} || $r->{m}{$path} || $Time;
-    my $size = $isdir ? $isdir : $r->{r}{$path}{length};
-    my ($atime,$mtime,$ctime);
-
-    $atime=$mtime=$ctime = $time;
+    my $ctime = $e->{ctime};
+    my $mtime = $e->{mtime};
+    my $atime = $mtime;
+    my $size  = $e->{length};
 
     return ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,
 	    $size,$atime,$mtime,$ctime,$blksize,$blocks);
@@ -136,7 +136,7 @@ use POSIX 'strftime';
 use LWP::UserAgent;
 use Date::Parse 'str2time';
 use XML::Simple;
-use Data::Dumper;
+use Data::Dumper 'Dumper';
 
 # cache entries for 10 minutes
 # this means that new recordings won't show up in the file system for up to this long
@@ -156,6 +156,7 @@ sub get_recorded {
     return $cache if $cache && time() - $cache->{mtime} < CACHE_TIME;
 
     my $result = $self->_get_recorded;
+    $result->{mtime} = time();
 
     local $Data::Dumper::Terse = 1;
     $Cache{recorded} = Data::Dumper->Dump([$result]);
@@ -163,15 +164,12 @@ sub get_recorded {
     return $cache = $result;
 }
 
-sub isdir {
+sub recording2path {
     my $self = shift;
-    my $path = shift;
-    my $r    = $self->get_recorded;
-    my ($title,$subtitle) = split '/',$path;
-    return if $subtitle;
-    $subtitle ||= '';
-    my @subs = grep {length $_} keys %{$r->{d}{$title}};
-    return scalar @subs;
+    my $recording = shift;
+    my $title    = $recording->{Title};
+    my $subtitle = $recording->{SubTitle};
+    return $subtitle ? ($title,$subtitle) : ($title);  # could be more sophisticated
 }
 
 sub _get_recorded {
@@ -197,41 +195,97 @@ sub _get_recorded {
     }
 
     my $rec = $parser->XMLin($fh);
+    $self->_build_directory_map($rec,$var);
+    return $var;
+}
+
+sub _build_directory_map {
+    my $self = shift;
+    my ($rec,$map) = @_;
 
     my $ok_chars = 'a-zA-Z0-9_.&@:* ^![]{}(),?#\$=+%-';
+
     my $count = 0;
-    my %to_fix;
+    my %recordings;
     for my $r (@{$rec->{Programs}{Program}}) {
 	$count++;
 
 	my $sg = $r->{Recording}{StorageGroup};
 	next if $sg eq 'LiveTV';
 
-	my ($title,$subtitle,$length,$filename,$datetime) = @{$r}{qw(Title SubTitle FileSize FileName StartTime)};
-
-	my $time = str2time($datetime);
-	my $date = strftime('%Y-%m-%d-%H:%M',localtime($time));
-	$title    =~ s/[^$ok_chars]/_/g;
-	$subtitle ||= '';
-	$subtitle =~ s/[^$ok_chars]/_/g;
-
-	my $name  = $subtitle ? "$title/$subtitle" : $title;
-	$name    .= " $date";
-	(my $display = $name) =~ s!^[^/]+/!!;
-	my ($suffix) = $filename =~ /(\.\w+)$/;
-	$display .= $suffix;
-
-	($title,$subtitle) = split '/',$name;
-
-	$var->{r}{$name}{dtime}     = $datetime;
-	$var->{r}{$name}{mtime}     = $time;
-	$var->{r}{$name}{length}    = $length;
-	$var->{r}{$name}{basename}  = $filename;
-	$var->{r}{$name}{display}   = $display;
-	$var->{r}{$name}{storage}   = $sg;
-	$var->{d}{$title}{$subtitle||''}++;
-	$var->{m}{$title}           = $time if ($var->{m}{$title}||0)<$time;
+	my (@path)              = $self->recording2path($r);
+	my $key                 = join('-',$r->{HostName},$r->{FileName});  # we use this as our unique ID
+	my $path                = join('/',map {s/[^$ok_chars]/_/g;$_} @path);
+	$recordings{$key}{path}{$path}++;
+	$recordings{$key}{meta} = $r;
     }
-    $var->{mtime} = time();
-    return $var;
+    
+    # fixup path names so that they are unique; we do this by adding the Channel and StartTime to each
+    my %fixup;
+    for my $key (keys %recordings) {
+	next unless keys %{$recordings{$key}{path}} > 1;  # nonunique path
+	my ($path) = keys %{$recordings{$key}{path}};
+	$fixup{$path}{$key}++;
+    }
+
+    # paths that need fixing to be unique
+    for my $path (keys %fixup) {
+	my $count = 0;
+	my @keys  = keys %{$fixup{$path}};
+	for my $key (@keys) {
+	    my $fixed_path = sprintf("%s-%s_%s",
+				     $path,
+				     $recordings{$key}{meta}{Channel}{ChannelName},
+				     $recordings{$key}{meta}{StartTime});
+				     
+	    delete $recordings{$key}{path};
+	    $recordings{$key}{path}{$fixed_path}++;
+	}
+    }
+
+    # at this point, we actually build the map that is passed to FUSE
+    for my $key (keys %recordings) {
+
+	my ($path) = keys %{$recordings{$key}{path}}; # should only be one unique path at this point
+
+	# take care of the extension
+	my $meta     = $recordings{$key}{meta};
+	my ($suffix) = $meta->{FileName}    =~ /\.(\w+)$/;
+	$path       .= ".$suffix" unless $path =~ /\.$suffix$/;
+
+	my @path = split('/',$path);
+	my $filename = pop @path;
+	unshift @path,'.';
+
+	my $ctime = str2time($meta->{StartTime});
+	my $mtime = str2time($meta->{LastModified});
+	
+	$map->{paths}{$path}{type}     = 'file';
+	$map->{paths}{$path}{length}   = $meta->{FileSize};
+	$map->{paths}{$path}{basename} = $meta->{FileName};
+	$map->{paths}{$path}{storage}  = $meta->{Recording}{StorageGroup};
+	$map->{paths}{$path}{ctime}    = $ctime;
+	$map->{paths}{$path}{mtime}    = $mtime;
+	
+	# take care of the directories
+	my $dir = '';
+	while (my $p = shift @path) {
+	    $dir .= length $dir ? "/$p" : $p;
+	    $dir =~ s!^\./!!;
+
+	    $map->{paths}{$dir}{type}     = 'directory';
+	    $map->{paths}{$dir}{length}++;
+	    $map->{paths}{$dir}{ctime}    = $ctime if ($map->{paths}{$p}{ctime}||0) < $ctime;
+	    $map->{paths}{$dir}{mtime}    = $mtime if ($map->{paths}{$p}{mtime}||0) < $mtime;
+
+	    # subdirectory entry
+	    if (defined $path[0]) {
+		$map->{directories}{$dir}{$path[0]}++;
+	    }
+	}
+	$map->{directories}{$dir}{$filename}++;
+    }
+
+    warn Dumper($map);
+    return $map;
 }
