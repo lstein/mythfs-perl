@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use threads;
 use threads::shared;
+use Thread::Semaphore;
 use Getopt::Long;
 use Fuse 'fuse_get_context';
 use File::Spec;
@@ -14,6 +15,7 @@ our $VERSION = '1.00';
 use constant CACHE_TIME => 60*10;  
 
 my %Cache    :shared;
+my $ReadSemaphore = Thread::Semaphore->new(5);
 my $Recorded;
 
 my (@FuseOptions,$Debug,$NoDaemon,$Pattern);
@@ -82,12 +84,13 @@ sub become_daemon {
 }
 
 sub start_update_thread {
+    $Recorded->_refresh_recorded;
     my $thr = threads->create(
 	sub {
 	    while (1) {
+		sleep (CACHE_TIME);
 		print  STDERR scalar(localtime())," Update_thread...";
 		$Recorded->_refresh_recorded;
-		sleep (CACHE_TIME);
 	    }
 	}
 	);
@@ -111,7 +114,6 @@ sub e_open {
 sub e_read {
     my ($path,$size,$offset) = @_;
 
-
     $offset ||= 0;
 
     $path = fixup($path);
@@ -124,8 +126,10 @@ sub e_read {
     my $byterange= $offset.'-'.($offset+$size-1);
 
     my $ua = LWP::UserAgent->new;
+    $ReadSemaphore->down();
     my $response = $ua->get("http://$Host:6544/Content/GetFile?StorageGroup=$sg&FileName=$basename",
 			    'Range'       => $byterange);
+    $ReadSemaphore->up();
     return -ECONNABORTED() unless $response->is_success;
     return $response->decoded_content;
 }
@@ -281,8 +285,9 @@ sub get_recorded {
     my $nocache = shift;
 
     return $cache if $cache && $nocache;
-    return $cache if $cache && time() - $Cache{mtime} < main::CACHE_TIME();
+    return $cache if $cache && (time() - $Cache{mtime}) < main::CACHE_TIME();
 
+    warn "refreshing cache from Cache, mtime = $Cache{mtime}";
     lock %Cache;
     return $cache = eval ($Cache{recorded}||'');
 }
@@ -329,6 +334,8 @@ sub apply_pattern {
 sub _refresh_recorded {
     my $self = shift;
 
+    lock %Cache;
+
     local $SIG{CHLD} = 'IGNORE';
     my $var    = {};
     my $parser = XML::Simple->new(SuppressEmpty=>1);
@@ -354,6 +361,7 @@ sub _refresh_recorded {
     local $Data::Dumper::Terse = 1;
     $Cache{recorded} = Data::Dumper->Dump([$var]);
     $Cache{mtime}    = time();
+    warn "_refresh_recorded(), set mtime to $Cache{mtime}";
 }
 
 sub _build_directory_map {
