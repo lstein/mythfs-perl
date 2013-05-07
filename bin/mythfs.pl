@@ -6,7 +6,6 @@ use threads;
 use threads::shared;
 use Thread::Semaphore;
 use Getopt::Long;
-use JSON qw(encode_json decode_json);
 use Fuse 'fuse_get_context';
 use File::Spec;
 use LWP::UserAgent;
@@ -49,8 +48,8 @@ GetOptions('option:s'   => \@FuseOptions,
 	   'debug'      => \$Debug,
     ) or die $Usage;
 
-list_patterns_and_die() if $Pattern eq 'help';
 $Pattern   ||= "%T/%S";
+list_patterns_and_die() if $Pattern eq 'help';
 
 my $Host       = shift or die $Usage;
 my $mountpoint = shift or die $Usage;
@@ -178,6 +177,7 @@ sub list_patterns_and_die {
 package Recorded;
 use strict;
 use POSIX 'strftime';
+use JSON qw(encode_json decode_json);
 use LWP::UserAgent;
 use Date::Parse 'str2time';
 use XML::Simple;
@@ -344,7 +344,7 @@ sub apply_pattern {
 		 $val = strftime($1,localtime(str2time($time)));
              \} else \{
 		 $val  = eval "\$recording->$field"; 
-		 $val     =~ tr!a-zA-Z0-9_.,&@:* ^\![]{}(),?#\$=+%-!_!c;
+		 $val     =~ tr!a-zA-Z0-9_.,&@:* ^\\![]{}(),?#\$=+%-!_!c;
 	     \}
              $val;
             }gex;
@@ -363,17 +363,18 @@ sub _compile_pattern_sub {
     $sub   .= "my (\$recording,\$code) = \@_;\n";
 
     while ($template =~ /%([a-zA-Z%]{1,3})/g) {
-	my $field = $Templates->{$1} or next;
+	my $code = $1;
+	my $field = $Templates->{$code} or next;
 	if ($field eq '%') {
-	    $sub .= "return '%' if \$code eq '$field';\n";
+	    $sub .= "return '%' if \$code eq '$code';\n";
 	    next;
 	}
 	if ($field =~ /(%\w+)(\{\w+\})/) { #datetime specifier
-	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2))) if \$code eq '$field';\n";
+	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2))) if \$code eq '$code';\n";
 	    next;
 	}
 	$sub .= <<END;
-if (\$code eq '$field') {
+if (\$code eq '$code') {
     my \$val = \$recording->$field;
     \$val =~ tr!a-zA-Z0-9_.,&\@:* ^\![]{}(),?#\$=+%-!_!c;
     return \$val;
