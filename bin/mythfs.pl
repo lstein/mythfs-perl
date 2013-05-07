@@ -8,7 +8,7 @@ use Thread::Semaphore;
 use Getopt::Long;
 use Fuse 'fuse_get_context';
 use File::Spec;
-use LWP::UserAgent;
+use WWW::Curl::Easy;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
 our $VERSION = '1.00';
@@ -126,13 +126,17 @@ sub e_read {
     my $sg       = $r->{paths}{$path}{storage};
     my $byterange= $offset.'-'.($offset+$size-1);
 
-    my $ua = LWP::UserAgent->new;
     $ReadSemaphore->down();
-    my $response = $ua->get("http://$Host:6544/Content/GetFile?StorageGroup=$sg&FileName=$basename",
-			    'Range'       => $byterange);
+    my $content;
+    my $curl = WWW::Curl::Easy->new;
+    $curl->setopt(CURLOPT_URL,"http://$Host:6544/Content/GetFile?StorageGroup=$sg&FileName=$basename");
+    $curl->setopt(CURLOPT_HTTPHEADER,["Range: $byterange"]);
+    $curl->setopt(CURLOPT_WRITEDATA,\$content);
+    my $retcode = $curl->perform;
     $ReadSemaphore->up();
-    return -ECONNABORTED() unless $response->is_success;
-    return $response->decoded_content;
+    return -ECONNABORTED() unless $retcode==0;
+    return -ECONNABORTED() unless $curl->getinfo(CURLINFO_RESPONSE_CODE) =~ /^2\d\d/;
+    return $content;
 }
 
 sub e_getdir {
@@ -178,7 +182,7 @@ package Recorded;
 use strict;
 use POSIX 'strftime';
 use JSON qw(encode_json decode_json);
-use LWP::UserAgent;
+use WWW::Curl::Easy;
 use Date::Parse 'str2time';
 use XML::Simple;
 
@@ -323,33 +327,15 @@ sub apply_pattern {
     my $recording = shift;
     no warnings;
 
-    my $pat_sub = $self->_compile_pattern_sub(); # this currently does nothing
-
+    my $pat_sub   = $self->_compile_pattern_sub();
     my $template  = $self->{pattern};
+
     my $Templates = Templates();
-    my $ok_chars = 'a-zA-Z0-9_.&@:* ^![]{}(),?#\$=+%-';
+    my @codes     = sort {length($b)<=>length($a)} keys %$Templates;
+    my $match     = join('|',@codes);
 
-    $template =~ s{%([a-zA-Z%]{1,3})}
-             {
-             my $val;
-             my $field=$Templates->{$1}; 
-             if (!$field) \{
-	         $val = "%$1"; # no change
-             \}
-	     elsif ($field eq '%') \{
-	         $val = '%';
-             \}
-	     elsif ($field =~ /(%\w+)(\{\w+\})/) \{ #datetime specifier
-		 my $time = eval "\$recording->$2";
-		 $val = strftime($1,localtime(str2time($time)));
-             \} else \{
-		 $val  = eval "\$recording->$field"; 
-		 $val     =~ tr!a-zA-Z0-9_.,&@:* ^\\![]{}(),?#\$=+%-!_!c;
-	     \}
-             $val;
-            }gex;
-
-   return $template;
+    $template =~ s/%($match)/$pat_sub->($recording,$1)/eg;
+    return $template;
 }
 
 sub _compile_pattern_sub {
@@ -375,15 +361,14 @@ sub _compile_pattern_sub {
 	}
 	$sub .= <<END;
 if (\$code eq '$code') {
-    my \$val = \$recording->$field;
-    \$val =~ tr!a-zA-Z0-9_.,&\@:* ^\![]{}(),?#\$=+%-!_!c;
+    my \$val = \$recording->$field || '';
+    \$val =~ tr!a-zA-Z0-9_.,&\@:* ^\\![]{}(),?#\$=+%-!_!c;
     return \$val;
 }
 END
     ;
     }
     $sub .= "}\n";
-    warn $sub;
     my $s = eval $sub;
     die $@ if $@;
     return $self->{pattern_sub} = $s;
@@ -402,14 +387,14 @@ sub _refresh_recorded {
     defined $pid or die "Couldn't fork: #!";
 
     if (!$pid) {
-	my $ua     = LWP::UserAgent->new;
-	my $response = $ua->get("http://$Host:6544/Dvr/GetRecordedList",
-				':content_cb' => sub {
-				    my ($chunk,$resp,$prot) = @_;
-				    print $chunk;
-				}
-	    );
-	warn $response->status_line unless $response->is_success;
+	my $curl = WWW::Curl::Easy->new;
+	$curl->setopt(CURLOPT_URL,"http://$Host:6544/Dvr/GetRecordedList");
+	$curl->setopt(CURLOPT_WRITEDATA,\*STDOUT);
+	if ((my $retcode = $curl->perform) != 0) {
+	    warn "failed with ",$curl->strerror($retcode),' ',$curl->errbuf;
+	} elsif ((my $response = $curl->getinfo(CURLINFO_RESPONSE_CODE)) !~ /^2\d\d/) {
+	    warn "failed with response code: $response";
+	}
 	exit 0;
     }
     
