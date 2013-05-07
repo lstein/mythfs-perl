@@ -308,7 +308,7 @@ sub get_recorded {
     return $cache if $cache && $nocache;
     return $cache if $cache && $self->mtime >= $Cache{mtime};
 
-    warn "refreshing cache from Cache, mtime = $Cache{mtime}";
+    warn "refreshing cache from Cache, mtime = $Cache{mtime}" if $main::Debug;
     lock %Cache;
     $self->mtime($Cache{mtime});
     return $self->cache(decode_json($Cache{recorded}||''));
@@ -403,7 +403,7 @@ sub _refresh_recorded {
 	$self->_build_directory_map($rec,$var);
 	$Cache{recorded} = encode_json($var);
 	$Cache{mtime}    = time();
-	warn "_refresh_recorded(), set mtime to $Cache{mtime}";
+	warn "_refresh_recorded(), set mtime to $Cache{mtime}" if $main::Debug;
     };
 }
 
@@ -486,7 +486,7 @@ sub _build_directory_map {
 	$map->{directories}{$dir}{$filename}++;
     }
 
-    print STDERR scalar keys %recordings," recordings retrieved\n";
+#    print STDERR scalar keys %recordings," recordings retrieved\n";
     return $map;
 }
 
