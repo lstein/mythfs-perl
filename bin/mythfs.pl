@@ -13,9 +13,10 @@ use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
 our $VERSION = '1.00';
 use constant CACHE_TIME => 60*10;  
+use constant MAX_GETS   => 8;
 
 my %Cache    :shared;
-my $ReadSemaphore = Thread::Semaphore->new(5);
+my $ReadSemaphore = Thread::Semaphore->new(MAX_GETS);
 my $Recorded;
 
 my (@FuseOptions,$Debug,$NoDaemon,$Pattern);
@@ -272,6 +273,7 @@ use constant Templates => {
 # cache entries for 10 minutes
 # this means that new recordings won't show up in the file system for up to this long
 my $cache;
+my $refresh_time = 0;
 
 sub new {
     my $class = shift;
@@ -285,10 +287,11 @@ sub get_recorded {
     my $nocache = shift;
 
     return $cache if $cache && $nocache;
-    return $cache if $cache && (time() - $Cache{mtime}) < main::CACHE_TIME();
+    return $cache if $cache && $refresh_time >= $Cache{mtime};
 
     warn "refreshing cache from Cache, mtime = $Cache{mtime}";
     lock %Cache;
+    $refresh_time = $Cache{mtime};
     return $cache = eval ($Cache{recorded}||'');
 }
 
