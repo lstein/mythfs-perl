@@ -6,6 +6,7 @@ use threads;
 use threads::shared;
 use Thread::Semaphore;
 use Getopt::Long;
+use JSON qw(encode_json decode_json);
 use Fuse 'fuse_get_context';
 use File::Spec;
 use LWP::UserAgent;
@@ -179,7 +180,6 @@ use POSIX 'strftime';
 use LWP::UserAgent;
 use Date::Parse 'str2time';
 use XML::Simple;
-use Data::Dumper 'Dumper';
 
 use constant Templates => {
     T  => '{Title}',
@@ -271,25 +271,43 @@ use constant Templates => {
 
 # cache entries for 10 minutes
 # this means that new recordings won't show up in the file system for up to this long
-my $cache;
 
 sub new {
     my $class = shift;
     my $pattern = shift;
 
-    return bless {pattern=>$pattern},ref $class || $class;
+    return bless {
+	pattern => $pattern,
+	cache   => undef,
+	mtime   => 0,
+    },ref $class || $class;
+}
+
+sub cache {
+    my $self = shift;
+    $self->{cache} = shift if @_;
+    return $self->{cache};
+}
+
+sub mtime {
+    my $self = shift;
+    $self->{mtime} = shift if @_;
+    return $self->{mtime};
 }
 
 sub get_recorded {
     my $self = shift;
     my $nocache = shift;
 
+    my $cache = $self->cache;
+
     return $cache if $cache && $nocache;
-    return $cache if $cache && (time() - $Cache{mtime}) < main::CACHE_TIME();
+    return $cache if $cache && $self->mtime >= $Cache{mtime};
 
     warn "refreshing cache from Cache, mtime = $Cache{mtime}";
     lock %Cache;
-    return $cache = eval ($Cache{recorded}||'');
+    $self->mtime($Cache{mtime});
+    return $self->cache(decode_json($Cache{recorded}||''));
 }
 
 sub recording2path {
@@ -304,6 +322,9 @@ sub apply_pattern {
     my $self = shift;
     my $recording = shift;
     no warnings;
+
+    my $pat_sub = $self->_compile_pattern_sub(); # this currently does nothing
+
     my $template  = $self->{pattern};
     my $Templates = Templates();
     my $ok_chars = 'a-zA-Z0-9_.&@:* ^![]{}(),?#\$=+%-';
@@ -331,6 +352,42 @@ sub apply_pattern {
    return $template;
 }
 
+sub _compile_pattern_sub {
+    my $self = shift;
+    return $self->{pattern_sub} if $self->{pattern_sub};
+
+    my $template = $self->{pattern};
+    my $Templates= Templates();
+
+    my $sub = "sub {\n";
+    $sub   .= "my (\$recording,\$code) = \@_;\n";
+
+    while ($template =~ /%([a-zA-Z%]{1,3})/g) {
+	my $field = $Templates->{$1} or next;
+	if ($field eq '%') {
+	    $sub .= "return '%' if \$code eq '$field';\n";
+	    next;
+	}
+	if ($field =~ /(%\w+)(\{\w+\})/) { #datetime specifier
+	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2))) if \$code eq '$field';\n";
+	    next;
+	}
+	$sub .= <<END;
+if (\$code eq '$field') {
+    my \$val = \$recording->$field;
+    \$val =~ tr!a-zA-Z0-9_.,&\@:* ^\![]{}(),?#\$=+%-!_!c;
+    return \$val;
+}
+END
+    ;
+    }
+    $sub .= "}\n";
+    warn $sub;
+    my $s = eval $sub;
+    die $@ if $@;
+    return $self->{pattern_sub} = $s;
+}
+
 sub _refresh_recorded {
     my $self = shift;
 
@@ -351,17 +408,17 @@ sub _refresh_recorded {
 				    print $chunk;
 				}
 	    );
-	die $response->status_line unless $response->is_success;
+	warn $response->status_line unless $response->is_success;
 	exit 0;
     }
-
-    my $rec = $parser->XMLin($fh);
-    $self->_build_directory_map($rec,$var);
-
-    local $Data::Dumper::Terse = 1;
-    $Cache{recorded} = Data::Dumper->Dump([$var]);
-    $Cache{mtime}    = time();
-    warn "_refresh_recorded(), set mtime to $Cache{mtime}";
+    
+    eval {
+	my $rec = $parser->XMLin($fh);
+	$self->_build_directory_map($rec,$var);
+	$Cache{recorded} = encode_json($var);
+	$Cache{mtime}    = time();
+	warn "_refresh_recorded(), set mtime to $Cache{mtime}";
+    };
 }
 
 sub _build_directory_map {
