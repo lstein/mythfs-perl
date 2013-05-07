@@ -16,6 +16,7 @@ my $build = Module::Build->new(
       'Fuse'         => '0.09',
       'Date::Parse'  => '2.30',
       'XML::Simple'  => '2.18',
+      'JSON'         => 0,
       'threads'      => 0,
     },
     build_class        => 'Module::Build',
