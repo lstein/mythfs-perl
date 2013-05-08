@@ -2,10 +2,10 @@ mythfs-perl
 ===========
 
 This is a FUSE filesystem for MythTV (www.mythtv.org).  It uses the
-Myth 0.25 API to mount the TV recordings known to a MythTV master back
-end onto a virtual filesystem on the client machine for convenient
-playback with mplayer or other video tools. Because this uses the
-MythTV network protocol, the recordings do not need to be on a shared
+Myth 0.25 API to mount the TV recordings known to a MythTV master
+backend onto a virtual filesystem on the client machine for convenient
+playback with mplayer or other video tools. Because it uses the MythTV
+network protocol, the recordings do not need to be on a shared
 NFS-mounted disk, nor does the Myth database need to be accessible
 from the client.
 
@@ -59,7 +59,7 @@ To unmount:
  $ <b>fusermount -u /tmp/mythfs</b>
 </pre>
 
-Note do NOT try to kill the mythfs.pl process. This will only cause a
+NOTE: Do NOT try to kill the mythfs.pl process. This will only cause a
 hung filesystem that needs to be unmounted with fusermount.
 
 There are a number of options that you can pass to mythfs.pl,
@@ -88,8 +88,8 @@ in my informal tests. The main limitation is that this mode does not
 understand storage groups, so all recordings need to be located in a
 single storage group in a locally-accessible directory. However if a
 recording file is not found in local directory, then mythfs.pl will
-fall back to the streaming protocol, so the recording will never
-become inaccessible.
+fall back to the streaming protocol, so the recording is accessible
+one way or another.
 
 The Default Directory Layout
 ============================
@@ -115,27 +115,29 @@ Here is an example directory listing:
 <pre>
  % <b>ls -lR  /tmp/mythfs</b>
  total 35
- -r--r--r-- 1 lstein lstein 12298756208 Dec 30 00:00 A Funny Thing Happened on the Way to the Forum 2012-12-30-00:00.mpg
- -r--r--r-- 1 lstein lstein 14172577964 Dec 25 16:00 A Heartland Christmas 2012-12-25-16:00.mpg
+ -r--r--r-- 1 lstein lstein 12298756208 Dec 30 00:00 A Funny Thing Happened on the Way to the Forum.mpg
+ -r--r--r-- 1 lstein lstein 14172577964 Dec 25 16:00 A Heartland Christmas.mpg
  dr-xr-xr-x 1 lstein lstein           5 Mar 11 03:00 Alfred Hitchcock Presents
  dr-xr-xr-x 1 lstein lstein           8 May  2 00:00 American Dad
  ...
 
  /home/lstein/Myth/Alfred Hitchcock Presents:
  total 3
- -r--r--r-- 1 lstein lstein 647625408 Dec 25 15:30 Back for Christmas 2012-12-25-15:30.mpg
- -r--r--r-- 1 lstein lstein 647090360 Dec  7 00:00 Dead Weight 2012-12-07-00:00.mpg
- -r--r--r-- 1 lstein lstein 660841056 Mar 11 03:00 Rose Garden 2013-03-11-03:00.mpg
- -r--r--r-- 1 lstein lstein 647524452 Dec 25 00:00 Santa Claus and the 10th Ave. Kid 2012-12-25-00:00.mpg
- -r--r--r-- 1 lstein lstein 649819932 Dec 27 00:00 The Contest of Aaron Gold 2012-12-27-00:00.mpg
+ -r--r--r-- 1 lstein lstein 647625408 Dec 25 15:30 Back for Christmas.mpg
+ -r--r--r-- 1 lstein lstein 647090360 Dec  7 00:00 Dead Weight.mpg
+ -r--r--r-- 1 lstein lstein 660841056 Mar 11 03:00 Rose Garden.mpg
+ -r--r--r-- 1 lstein lstein 647524452 Dec 25 00:00 Santa Claus and the 10th Ave. Kid.mpg
+ -r--r--r-- 1 lstein lstein 649819932 Dec 27 00:00 The Contest of Aaron Gold.mpg
 
  /home/lstein/Myth/American Dad:
  total 4
- -r--r--r-- 1 lstein lstein 3512038152 Apr 24 00:00 Flirting With Disaster 2013-04-24-00:00.mpg
+ -r--r--r-- 1 lstein lstein 3512038152 Apr 24 00:00 Flirting With Disaster.mpg
 </pre>
 
 The size of directories corresponds to the number of recordings (not
-counting subdirectories) contained within it.
+counting subdirectories) contained within it. The modification time of
+directories is the start time of the most recent recording contained
+within it.
 
 Customizing the Directory Listing
 =================================
@@ -194,6 +196,13 @@ you use, and dangling/extra delimiters will be trimmed:
 <pre>
  $ mythfs.pl -p '%T:%S' --trim=':' backend /tmp/myth
 </pre>
+
+If after applying the pattern to a recording the resulting path is not
+unique, then this script will uniqueify the path by appending to it
+the channel number and recording start time, for example:
+
+ Masterpiece Classic/Downtown Abbey_17_1-2013-02-11T02:00.mpg
+ Masterpiece Classic/Downtown Abbey_17_1-2013-03-10T06:00.mpg
 
 Fuse Notes
 ==========
