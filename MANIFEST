@@ -3,3 +3,4 @@ Build.PL
 MANIFEST			This list of files
 README.md
 t/01.mythfs.t
+t/data/dummy_xml.gz
