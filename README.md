@@ -29,24 +29,13 @@ If you get messages about missing dependencies, run:
  $ <b>./Build installdeps</b>
 </pre>
 
-and then "sudo ./Build install".
+and then "sudo ./Build install". See Fuse Notes if you get
+Fuse-related errors when attempting to install dependencies.
 
-IMPORTANT: Fuse.pm version 0.14 is required for proper threaded
-operation under Perl 5.14 and higher, but the version currently on
-CPAN fails regression tests on some platforms. I have found that the
-easiest way to get a fully operational Fuse module is to clone and
-compile a patched version of the source:
-
-<pre>
- $ <b>git clone git://github.com/isync/perl-fuse.git</b>
- $ <b>cd perl-fuse</b>
- $ <b>perl Makefile.PL</b>
- $ <b>make test</b>
- $ <b>sudo make install</b>
-</pre>
-
-For best performance, Perl must have been compiled with IThreads.
-Threading will be automatically disabled if not available.
+For best performance, Perl must have been compiled with support for
+IThreads. In addition, you will need at Fuse version 0.15 to run
+correctly under Perl version >= 5.14.  Threading will be automatically
+disabled if not available. See Fuse Notes for additional information.
 
 Usage
 =====
@@ -55,6 +44,7 @@ To mount the recordings contained on the master backend "MyHost" onto
 a local filesystem named "/tmp/mythfs" use this command:
 
 <pre>
+ $ <b>mkdir /tmp/mythfs</b>
  $ <b>mythfs.pl MyHost /tmp/mythfs</b>
 </pre>
 
@@ -122,6 +112,86 @@ Here is an example directory listing:
 
 Customizing the Directory Listing
 =================================
+
+You may customize the directory listing by providing a pattern for
+naming each recording using the -p option. For example:
+
+ $ mythfs.pl -p '%C/%T:%S (%od-%ob-%oY)' mythbackend ~/Myth
+
+This will create filenames that look like this:
+
+<pre>
+ Sitcom/The Simpsons:The Food Wife (13-Nov-2011).mpg
+</pre>
+
+Patterns contain a combination of constant strings plus substitution
+patterns consisting of the "%" sign plus 1 to three characters. A
+slash will be interpreted as a directory level: multiple levels are
+allowed. 
+
+Commonly-used substitution patterns are:
+
+    %T   = Title (show name)
+    %S   = Subtitle (episode name)
+    %C   = Category
+    %cn  = Channel: channel number
+    %cN  = Channel: channel name
+    %y   = Recording start time:  year, 2 digits
+    %Y   = Recording start time:  year, 4 digits
+    %m   = Recording start time:  month, leading zero
+    %b   = Recording start time:  abbreviated month name
+    %B   = Recording start time:  full month name
+    %d   = Recording start time:  day of month, leading zero
+    %h   = Recording start time:  12-hour hour, with leading zero
+    %H   = Recording start time:  24-hour hour, with leading zero
+    %i   = Recording start time:  minutes
+    %s   = Recording start time:  seconds
+    %a   = Recording start time:  am/pm
+    %A   = Recording start time:  AM/PM
+
+A full list of patterns can be obtained by running "mythfs.pl -p
+help".
+
+Patterns are largely compatible with the excellent mythlink.pl
+(http://www.mythtv.org/wiki/Mythlink.pl) script, but there are a small
+number of enhancements, such as the ability to generate the month
+name. Also, the patterns that generate the month name without a
+leading zero are not supported.
+
+You may wish to use a delimiter to separate fields of the recording
+name, for example "%T:%S" to generate "Title:Subtitle". Occasionally a
+recording field is empty, leading to names like "The Wild
+Ones:.mpg". To avoid this, pass the --trim option with the delimiter
+you use, and dangling/extra delimiters will be trimmed:
+
+<pre>
+ $ mythfs.pl -p '%T:%S' --trim=':' backend /tmp/myth
+</pre>
+
+Fuse Notes
+==========
+
+For best performance, you will need to run this filesystem using a
+version of Perl that supports IThreads. Otherwise it will fall back to
+non-threaded mode, which will introduce occasional delays during
+directory listings and have notably slower performance when reading
+from more than one file simultaneously.
+
+If you are running Perl 5.14 or higher, you *MUST* use at least 0.15
+of the Perl Fuse module. At the time this was written, the version of
+Fuse 0.15 on CPAN was failing its regression tests on many
+platforms. I have found that the easiest way to get a fully
+operational Fuse module is to clone and compile a patched version of
+the source, following this recipe:
+
+<pre>
+ $ <b>git clone git://github.com/isync/perl-fuse.git</b>
+ $ <b>cd perl-fuse</b>
+ $ <b>perl Makefile.PL</b>
+ $ <b>make test</b>   (optional)
+ $ <b>sudo make install</b>
+</pre>
+
 
 Troubleshooting
 ===============

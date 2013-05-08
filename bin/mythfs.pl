@@ -12,15 +12,15 @@ use WWW::Curl::Easy;
 use Config;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
-our $VERSION = '1.00';
-use constant CACHE_TIME => 60*10;
+our $VERSION = '1.10';
+use constant CACHE_TIME => 10; # minutes
 use constant MAX_GETS   => 8;
 
 my %Cache    :shared;
 my $ReadSemaphore = Thread::Semaphore->new(MAX_GETS);
 my $Recorded;
 
-my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,$NoThreads);
+my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,$NoThreads,$HasIThreads,$Delimiter);
 my $Usage = <<END;
 Usage: $0 <Myth Master Host> <mountpoint>
 
@@ -32,8 +32,9 @@ Options:
    -o use_ino              let filesystem set inode numbers
    -o nonempty             allow mounts over non-empty file/dir
    -p <patterns>           filename pattern default ("%T/%S")
+   -trim <char>            trim redundant occurrences of this character
    -f                      remain in foreground
-   -d                      trace FUSE operations
+   -d                      enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
    -nothreads              disable threads
 
 Filename patterns consist of regular characters and substitution
@@ -49,18 +50,19 @@ GetOptions('option:s'   => \@FuseOptions,
 	   'cachetime=i'=> \$CacheTime,
 	   'foreground' => \$NoDaemon,
 	   'pattern=s'  => \$Pattern,
-	   'debug'      => \$Debug,
+	   'debug:i'    => \$Debug,
+	   'separator=s'=> \$Delimiter,
 	   'nothreads'  => \$NoThreads,
     ) or die $Usage;
 
 $Pattern   ||= "%T/%S";
 list_patterns_and_die() if $Pattern eq 'help';
-unless ($NoThreads || $Config{useithreads}) {
-    warn "This perl not compiled for ithreads. Threading support disabled.\n";
-    warn "Filesystem will not be automatically updated to show new && deleted recordings.\n";
-    $NoThreads++;
-}
+
+$HasIThreads = $Config{useithreads};
+$NoThreads ||= check_disable_threads();
 $CacheTime ||= CACHE_TIME;
+$CacheTime *=  60;  # to seconds
+$Debug     = 1 if defined $Debug && $Debug==0;
 
 my $Host       = shift or die $Usage;
 my $mountpoint = shift or die $Usage;
@@ -80,11 +82,25 @@ Fuse::main(mountpoint => $mountpoint,
 	   read       => 'main::e_read',
 	   release    => 'main::e_release',
 	   mountopts  => $options,
-	   debug      => $Debug||0,
+	   debug      => $Debug>1,
 	   threaded   => !$NoThreads,
     );
 
 exit 0;
+
+sub check_disable_threads {
+    unless ($HasIThreads) {
+	warn "This version of perl is not compiled for ithreads. Running with slower non-threaded version.\n";
+	return 1;
+    }
+    if ($] >= 5.014 && $Fuse::VERSION < 0.15) {
+	warn "You need Fuse version 0.15 or higher to run under this version of Perl.\n";
+	warn "Threads will be disabled. Running with slower non-threaded version.\n";
+	return 1;
+    }
+
+    return 0;
+}
 
 sub become_daemon {
     fork() && exit 0;
@@ -96,11 +112,11 @@ sub become_daemon {
 
 sub start_update_thread {
     $Recorded->_refresh_recorded;
+    return unless $HasIThreads;
     my $thr = threads->create(
 	sub {
 	    while (1) {
 		sleep ($CacheTime);
-		print  STDERR scalar(localtime())," Update_thread..." if $Debug;
 		$Recorded->_refresh_recorded;
 	    }
 	}
@@ -231,6 +247,8 @@ use constant Templates => {
     s  => '%S{StartTime}',
     a  => '%P{StartTime}',
     A  => '%p{StartTime}',
+    b  => '%b{StartTime}',
+    B  => '%B{StartTime}',
 
     ey  => '%y{EndTime}',
     eY  => '%Y{EndTime}',
@@ -246,6 +264,8 @@ use constant Templates => {
     es  => '%S{EndTime}',
     ea  => '%P{EndTime}',
     eA  => '%p{EndTime}',
+    eb  => '%b{EndTime}',
+    eB  => '%B{EndTime}',
 
     # the API doesn't distinguish between program start time and recording start time
     py  => '%y{StartTime}',
@@ -262,6 +282,8 @@ use constant Templates => {
     ps  => '%S{StartTime}',
     pa  => '%P{StartTime}',
     pA  => '%p{StartTime}',
+    pb  => '%b{StartTime}',
+    pB  => '%B{StartTime}',
 
     pey  => '%y{EndTime}',
     peY  => '%Y{EndTime}',
@@ -277,6 +299,8 @@ use constant Templates => {
     pes  => '%S{EndTime}',
     pea  => '%P{EndTime}',
     peA  => '%p{EndTime}',
+    peb  => '%b{EndTime}',
+    peB  => '%B{EndTime}',
 
     oy   => '%y{Airdate}',
     oY   => '%Y{Airdate}',
@@ -284,6 +308,8 @@ use constant Templates => {
     om   => '%m{Airdate}',
     oj   => '%e{Airdate}',
     od   => '%d{Airdate}',
+    ob   => '%b{Airdate}',
+    oB   => '%B{Airdate}',
 
     '%'  => '%',
     };
@@ -316,13 +342,15 @@ sub mtime {
 sub get_recorded {
     my $self = shift;
     my $nocache = shift;
-
+    
     my $cache = $self->cache;
 
     return $cache if $cache && $nocache;
+
+    $Recorded->_refresh_recorded if !$HasIThreads && (time() - $Cache{mtime} >= $CacheTime);
     return $cache if $cache && $self->mtime >= $Cache{mtime};
 
-    warn "refreshing cache from Cache, mtime = $Cache{mtime}" if $Debug;
+    warn scalar localtime()," refreshing thread-level cache, mtime = $Cache{mtime}\n" if $Debug;
     lock %Cache;
     $self->mtime($Cache{mtime});
     return $self->cache(decode_json($Cache{recorded}||''));
@@ -333,6 +361,15 @@ sub recording2path {
     my $recording = shift;
     my $path     = $self->apply_pattern($recording);
     my @components = split '/',$path;
+
+    # trimming operation
+    if ($Delimiter) {
+	foreach (@components) {
+	    s/${Delimiter}{2,}/$Delimiter/g;
+	    s/$Delimiter$//;
+	}
+    }
+
     return grep {length} @components;
 }
 
@@ -370,7 +407,7 @@ sub _compile_pattern_sub {
 	    next;
 	}
 	if ($field =~ /(%\w+)(\{\w+\})/) { #datetime specifier
-	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2))) if \$code eq '$code';\n";
+	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2)||0)) if \$code eq '$code';\n";
 	    next;
 	}
 	$sub .= <<END;
@@ -391,9 +428,9 @@ END
 sub _refresh_recorded {
     my $self = shift;
 
-    lock %Cache;
+    print  STDERR scalar(localtime())," Refreshing recording list..." if $Debug;
 
-    local $SIG{CHLD} = 'IGNORE';
+    lock %Cache;
     my $var    = {};
     my $parser = XML::Simple->new(SuppressEmpty=>1);
 
@@ -413,7 +450,7 @@ sub _refresh_recorded {
     $self->_build_directory_map($rec,$var);
     $Cache{recorded} = encode_json($var);
     $Cache{mtime}    = time();
-    print STDERR "_refresh_recorded(), set mtime to $Cache{mtime}" if $Debug;
+    print STDERR "mtime set to $Cache{mtime}\n" if $Debug;
 }
 
 sub _build_directory_map {
@@ -444,9 +481,9 @@ sub _build_directory_map {
 	my $count = 0;
 	for my $key (@keys) {
             my $start = $recordings{$key}{meta}{StartTime};
-	    $start =~ s/\d+Z$//;
+	    $start =~ s/:\d+Z$//;
             
-	    my $fixed_path = sprintf("%s_%s",$path,$start);
+	    my $fixed_path = sprintf("%s_%s-%s",$path,$recordings{$key}{meta}{Channel}{ChanNum},$start);
 	    delete $recordings{$key}{path};
 	    $recordings{$key}{path}{$fixed_path}++;
 	}
@@ -495,7 +532,7 @@ sub _build_directory_map {
 	$map->{directories}{$dir}{$filename}++;
     }
 
-    print STDERR scalar keys %recordings," recordings retrieved\n" if $Debug;
+    print STDERR scalar keys %recordings," recordings retrieved..." if $Debug;
     return $map;
 }
 
@@ -518,6 +555,8 @@ The following substitution patterns can be used in recording paths.
     %y   = Recording start time:  year, 2 digits
     %Y   = Recording start time:  year, 4 digits
     %m   = Recording start time:  month, leading zero
+    %b   = Recording start time:  abbreviated month name
+    %B   = Recording start time:  full month name
     %d   = Recording start time:  day of month, leading zero
     %h   = Recording start time:  12-hour hour, with leading zero
     %H   = Recording start time:  24-hour hour, with leading zero
@@ -528,6 +567,8 @@ The following substitution patterns can be used in recording paths.
     %ey  = Recording end time:  year, 2 digits
     %eY  = Recording end time:  year, 4 digits
     %em  = Recording end time:  month, leading zero
+    %eb  = Recording end time:  abbreviated month name
+    %eB  = Recording end time:  full month name
     %ej  = Recording end time:  day of month
     %ed  = Recording end time:  day of month, leading zero
     %eh  = Recording end time:  12-hour hour, with leading zero
@@ -539,6 +580,8 @@ The following substitution patterns can be used in recording paths.
     %py  = Program start time:  year, 2 digits
     %pY  = Program start time:  year, 4 digits
     %pm  = Program start time:  month, leading zero
+    %pb  = Program start time:  abbreviated month name
+    %pB  = Program start time:  full month name
     %pj  = Program start time:  day of month
     %pd  = Program start time:  day of month, leading zero
     %ph  = Program start time:  12-hour hour, with leading zero
@@ -550,6 +593,8 @@ The following substitution patterns can be used in recording paths.
     %pey = Program end time:  year, 2 digits
     %peY = Program end time:  year, 4 digits
     %pem = Program end time:  month, leading zero
+    %peb = Program end time:  abbreviated month name
+    %peB = Program end time:  full month name
     %pej = Program end time:  day of month
     %ped = Program end time:  day of month, leading zero
     %peh = Program end time:  12-hour hour, with leading zero
@@ -561,6 +606,8 @@ The following substitution patterns can be used in recording paths.
     %oy  = Original Airdate:  year, 2 digits
     %oY  = Original Airdate:  year, 4 digits
     %om  = Original Airdate:  month, leading zero
+    %ob  = Original Airdate:  abbreviated month name
+    %oB  = Original Airdate:  full month name
     %oj  = Original Airdate:  day of month
     %od  = Original Airdate:  day of month, leading zero
     %%   = a literal % character
