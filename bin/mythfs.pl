@@ -12,7 +12,7 @@ use WWW::Curl::Easy;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
 our $VERSION = '1.00';
-use constant CACHE_TIME => 60*10;  
+use constant CACHE_TIME => 60;
 use constant MAX_GETS   => 8;
 
 my %Cache    :shared;
@@ -69,6 +69,7 @@ Fuse::main(mountpoint => $mountpoint,
 	   getattr    => 'main::e_getattr',
 	   open       => 'main::e_open',
 	   read       => 'main::e_read',
+	   release    => 'main::e_release',
 	   mountopts  => $options,
 	   debug      => $Debug||0,
 	   threaded   => 1,
@@ -109,6 +110,10 @@ sub e_open {
     my $r = $Recorded->get_recorded;
     return -ENOENT() unless $r->{paths}{$path} || $r->{directories}{$path};
     return -EISDIR() if $r->{directories}{$path};
+    return 0;
+}
+
+sub e_release {
     return 0;
 }
 
@@ -383,28 +388,23 @@ sub _refresh_recorded {
     my $var    = {};
     my $parser = XML::Simple->new(SuppressEmpty=>1);
 
-    my $pid      = open (my $fh,"-|");
-    defined $pid or die "Couldn't fork: #!";
-
-    if (!$pid) {
-	my $curl = WWW::Curl::Easy->new;
-	$curl->setopt(CURLOPT_URL,"http://$Host:6544/Dvr/GetRecordedList");
-	$curl->setopt(CURLOPT_WRITEDATA,\*STDOUT);
-	if ((my $retcode = $curl->perform) != 0) {
-	    warn "failed with ",$curl->strerror($retcode),' ',$curl->errbuf;
-	} elsif ((my $response = $curl->getinfo(CURLINFO_RESPONSE_CODE)) !~ /^2\d\d/) {
-	    warn "failed with response code: $response";
-	}
-	exit 0;
+    my $data;
+    my $curl = WWW::Curl::Easy->new;
+    $curl->setopt(CURLOPT_URL,"http://$Host:6544/Dvr/GetRecordedList");
+    $curl->setopt(CURLOPT_WRITEDATA,\$data);
+    if ((my $retcode = $curl->perform) != 0) {
+	warn "failed with ",$curl->strerror($retcode),' ',$curl->errbuf;
+	return;
+    } elsif ((my $response = $curl->getinfo(CURLINFO_RESPONSE_CODE)) !~ /^2\d\d/) {
+	warn "failed with response code: $response";
+	return;
     }
     
-    eval {
-	my $rec = $parser->XMLin($fh);
-	$self->_build_directory_map($rec,$var);
-	$Cache{recorded} = encode_json($var);
-	$Cache{mtime}    = time();
-	warn "_refresh_recorded(), set mtime to $Cache{mtime}";
-    };
+    my $rec = $parser->XMLin($data);
+    $self->_build_directory_map($rec,$var);
+    $Cache{recorded} = encode_json($var);
+    $Cache{mtime}    = time();
+    warn "_refresh_recorded(), set mtime to $Cache{mtime}";
 }
 
 sub _build_directory_map {
