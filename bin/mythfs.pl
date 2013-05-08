@@ -12,7 +12,7 @@ use WWW::Curl::Easy;
 use Config;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
-our $VERSION = '1.15';
+our $VERSION = '1.20';
 use constant CACHE_TIME => 10; # minutes
 use constant MAX_GETS   => 8;  # maximum number of simultaneous file fetches
 

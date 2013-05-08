@@ -1,6 +1,9 @@
 bin/mythfs.pl
 Build.PL
+Changes
 MANIFEST			This list of files
+META.json
+META.yml
 README.md
 t/01.mythfs.t
 t/data/dummy_xml.gz

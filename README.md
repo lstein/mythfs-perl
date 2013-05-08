@@ -104,11 +104,12 @@ is "%T/%S".
 For recordings that do not have a subtitle, typically one-off movie
 showings, the recording is placed at the top level.
 
-In all cases, the time the recorded was started is attached to the
-filename, along with an extension indicating the recording type (.mpg
-or .nuv). The file create and modification times correspond to the
-recording start time. For directories, the times are set to the most
-recent recording contained within the directgory.
+If needed for uniqueness, the channel number and time the recorded was
+started is attached to the filename, along with an extension
+indicating the recording type (.mpg or .nuv). The file create and
+modification times correspond to the recording start time. For
+directories, the times are set to the most recent recording contained
+within the directory.
 
 Here is an example directory listing:
 
