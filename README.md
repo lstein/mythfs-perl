@@ -68,14 +68,38 @@ interval that the backend is checked for new and deleted
 recordings. Call mythfs.pl with the -h option for the complete help
 text.
 
-Understanding the Default Directory Layout
-==========================================
+Local Recordings
+================
+
+The default behavior of this filesystem is to use the Myth API to
+stream recordings across the network when you attempt to read from
+them. This is done in an efficient way that fetches just the portion
+of the file you wish to read. However, if the underlying recording
+files are directly accessible (either in a regular director or via an
+NFS mount), you can get better performance by passing mythfs.pl the
+--mountpt option with the path to the directory in which the
+recordings can be found. The filesystem will then be set up as a set
+of symbolic links that point from a human readable file name to the
+recording file.
+
+The main advantage of creating symbolic links is that NFSv4 can be
+significantly faster than the backend streaming protocol -- about 1.6X
+in my informal tests. The main limitation is that this mode does not
+understand storage groups, so all recordings need to be located in a
+single storage group in a locally-accessible directory. However if a
+recording file is not found in local directory, then mythfs.pl will
+fall back to the streaming protocol, so the recording will never
+become inaccessible.
+
+The Default Directory Layout
+============================
 
 Recordings that are part of a series usually have a title (the series
 name) and subtitle (the episode name). Such recordings are displayed
 using a two-tier directory structure in which the top-level directory
 is the series name, and the contents are a series of recorded
-episodes.
+episodes. The corresponding pattern (as described in the next section)
+is "%T/%S".
 
 For recordings that do not have a subtitle, typically one-off movie
 showings, the recording is placed at the top level.
@@ -109,6 +133,9 @@ Here is an example directory listing:
  total 4
  -r--r--r-- 1 lstein lstein 3512038152 Apr 24 00:00 Flirting With Disaster 2013-04-24-00:00.mpg
 </pre>
+
+The size of directories corresponds to the number of recordings (not
+counting subdirectories) contained within it.
 
 Customizing the Directory Listing
 =================================

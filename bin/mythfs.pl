@@ -20,38 +20,54 @@ my %Cache    :shared;
 my $ReadSemaphore = Thread::Semaphore->new(MAX_GETS);
 my $Recorded;
 
-my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,$NoThreads,$HasIThreads,$Delimiter);
+my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,
+    $LocalMount,$NoThreads,$HasIThreads,$Delimiter);
 my $Usage = <<END;
-Usage: $0 <Myth Master Host> <mountpoint>
+Usage: $0 <Myth backend Host> <mountpoint>
+
+Fuse filesystem to mount recordings from Myth backend running on Host
+at the directory indicated by mountpoint: e.g. "mythfs.pl myhost
+/tmp/mythfs".
 
 Options:
-   -c <time>               cache time for recording names (minutes)
-   -o allow_other          allow other accounts to access filesystem
-   -o default_permissions  enable permission checking by kernel
-   -o fsname=name          set filesystem name
-   -o use_ino              let filesystem set inode numbers
-   -o nonempty             allow mounts over non-empty file/dir
-   -p <patterns>           filename pattern default ("%T/%S")
-   -trim <char>            trim redundant occurrences of this character
-   -f                      remain in foreground
-   -d                      enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
-   -nothreads              disable threads
+   --cachetime=<time>            cache time for recording names (minutes)
+   --option=allow_other          allow other accounts to access filesystem
+   --option=default_permissions  enable permission checking by kernel
+   --option=fsname=name          set filesystem name
+   --option=use_ino              let filesystem set inode numbers
+   --option=nonempty             allow mounts over non-empty file/dir
+   --pattern=<patterns>          filename pattern default ("%T/%S")
+   --mountpt=<path>              mountpoint/directory for locally stored recordings
+   --trim=<char>                 trim redundant occurrences of this character
+   --foreground                  remain in foreground
+   --debug=<1,2>                 enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
+   --nothreads                   disable threads
 
 Filename patterns consist of regular characters and substitution
 patterns beginning with a %. Slashes (\/) will delimit directories and
 subdirectories. Empty directory names will be collapsed. The default
 is "%T/%S", the recording title followed by the subtitle.  Run this
 command with "-p help" to get a list of all the substitution patterns
-recognized.  
+recognized.
+
+By default, files will be streamed as needed from the myth
+backend. However, if the recording files are accessible directly from
+the filesystem (e.g. via an NFS mount), you can provide the path to
+this directory using the --mountpt option. The filenames will then be
+presented as symbolic links.
+
+Command line switches can abbreviated to single letters, so you can
+use "-p %T/%S" instead of "--pattern=%/%S".
+
 END
     ;
-
 GetOptions('option:s'   => \@FuseOptions,
 	   'cachetime=i'=> \$CacheTime,
 	   'foreground' => \$NoDaemon,
 	   'pattern=s'  => \$Pattern,
 	   'debug:i'    => \$Debug,
 	   'separator=s'=> \$Delimiter,
+	   'mountpt=s'  => \$LocalMount,
 	   'nothreads'  => \$NoThreads,
     ) or die $Usage;
 
@@ -81,6 +97,7 @@ Fuse::main(mountpoint => $mountpoint,
 	   open       => 'main::e_open',
 	   read       => 'main::e_read',
 	   release    => 'main::e_release',
+	   readlink   => 'main::e_readlink',
 	   mountopts  => $options,
 	   debug      => $Debug>1,
 	   threaded   => !$NoThreads,
@@ -178,6 +195,15 @@ sub e_getdir {
     return ('.','..',@entries,0);
 }
 
+sub e_readlink {
+    my $path = fixup(shift) || '.';
+    my $r = $Recorded->get_recorded;
+    my $e = $r->{paths}{$path} or return -ENOENT();
+    $LocalMount                or return -ENOENT();
+    my $local_path = "$LocalMount/$r->{paths}{$path}{basename}";
+    return $local_path;
+}
+
 sub e_getattr {
     my $path = fixup(shift) || '.';
 
@@ -188,9 +214,10 @@ sub e_getattr {
     my $r = $Recorded->get_recorded;
     my $e = $r->{paths}{$path} or return -ENOENT();
 
-    my $isdir = $e->{type} eq 'directory';
+    my $isdir  = $e->{type} eq 'directory';
+    my $islink = $e->{type} eq 'file' && $LocalMount && -r "$LocalMount/$e->{basename}";
 
-    my $mode = $isdir ? 0040000|0555 : 0100000|0444;
+    my $mode = $isdir ? 0040000|0555 : ($islink ? 0120000|0777 : 0100000|0444);
 
     my $ctime = $e->{ctime};
     my $mtime = $e->{mtime};
