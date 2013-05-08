@@ -31,9 +31,22 @@ If you get messages about missing dependencies, run:
 
 and then "sudo ./Build install".
 
-For best performance, Perl must have been compiled with IThreads in
-order for this script to work. Threading will be automatically
-disabled if not available.
+IMPORTANT: Fuse.pm version 0.14 is required for proper threaded
+operation under Perl 5.14 and higher, but the version currently on
+CPAN fails regression tests on some platforms. I have found that the
+easiest way to get a fully operational Fuse module is to clone and
+compile a patched version of the source:
+
+<pre>
+ $ <b>git clone git://github.com/isync/perl-fuse.git</b>
+ $ <b>cd perl-fuse</b>
+ $ <b>perl Makefile.PL</b>
+ $ <b>make test</b>
+ $ <b>sudo make install</b>
+</pre>
+
+For best performance, Perl must have been compiled with IThreads.
+Threading will be automatically disabled if not available.
 
 Usage
 =====
@@ -121,4 +134,4 @@ Author
 ======
 
 Lincoln Stein <lincoln.stein@gmail.com>
-3 May 2013
+8 May 2013
