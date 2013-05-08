@@ -9,29 +9,32 @@ use Getopt::Long;
 use Fuse 'fuse_get_context';
 use File::Spec;
 use WWW::Curl::Easy;
+use Config;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
 our $VERSION = '1.00';
-use constant CACHE_TIME => 60*10;  
+use constant CACHE_TIME => 60*10;
 use constant MAX_GETS   => 8;
 
 my %Cache    :shared;
 my $ReadSemaphore = Thread::Semaphore->new(MAX_GETS);
 my $Recorded;
 
-my (@FuseOptions,$Debug,$NoDaemon,$Pattern);
+my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,$NoThreads);
 my $Usage = <<END;
 Usage: $0 <Myth Master Host> <mountpoint>
 
 Options:
-   -f                      remain in foreground
+   -c <time>               cache time for recording names (minutes)
    -o allow_other          allow other accounts to access filesystem
    -o default_permissions  enable permission checking by kernel
    -o fsname=name          set filesystem name
    -o use_ino              let filesystem set inode numbers
    -o nonempty             allow mounts over non-empty file/dir
    -p <patterns>           filename pattern default ("%T/%S")
+   -f                      remain in foreground
    -d                      trace FUSE operations
+   -nothreads              disable threads
 
 Filename patterns consist of regular characters and substitution
 patterns beginning with a %. Slashes (\/) will delimit directories and
@@ -43,13 +46,21 @@ END
     ;
 
 GetOptions('option:s'   => \@FuseOptions,
+	   'cachetime=i'=> \$CacheTime,
 	   'foreground' => \$NoDaemon,
 	   'pattern=s'  => \$Pattern,
 	   'debug'      => \$Debug,
+	   'nothreads'  => \$NoThreads,
     ) or die $Usage;
 
 $Pattern   ||= "%T/%S";
 list_patterns_and_die() if $Pattern eq 'help';
+unless ($NoThreads || $Config{useithreads}) {
+    warn "This perl not compiled for ithreads. Threading support disabled.\n";
+    warn "Filesystem will not be automatically updated to show new && deleted recordings.\n";
+    $NoThreads++;
+}
+$CacheTime ||= CACHE_TIME;
 
 my $Host       = shift or die $Usage;
 my $mountpoint = shift or die $Usage;
@@ -57,11 +68,9 @@ $mountpoint    = File::Spec->rel2abs($mountpoint);
 
 my $options  = join(',',@FuseOptions,'ro');
 
-
 $Recorded = Recorded->new($Pattern);
 
 become_daemon() unless $NoDaemon;
-
 start_update_thread();
 
 Fuse::main(mountpoint => $mountpoint,
@@ -69,9 +78,10 @@ Fuse::main(mountpoint => $mountpoint,
 	   getattr    => 'main::e_getattr',
 	   open       => 'main::e_open',
 	   read       => 'main::e_read',
+	   release    => 'main::e_release',
 	   mountopts  => $options,
 	   debug      => $Debug||0,
-	   threaded   => 1,
+	   threaded   => !$NoThreads,
     );
 
 exit 0;
@@ -89,8 +99,8 @@ sub start_update_thread {
     my $thr = threads->create(
 	sub {
 	    while (1) {
-		sleep (CACHE_TIME);
-		print  STDERR scalar(localtime())," Update_thread...";
+		sleep ($CacheTime);
+		print  STDERR scalar(localtime())," Update_thread..." if $Debug;
 		$Recorded->_refresh_recorded;
 	    }
 	}
@@ -109,6 +119,10 @@ sub e_open {
     my $r = $Recorded->get_recorded;
     return -ENOENT() unless $r->{paths}{$path} || $r->{directories}{$path};
     return -EISDIR() if $r->{directories}{$path};
+    return 0;
+}
+
+sub e_release {
     return 0;
 }
 
@@ -308,7 +322,7 @@ sub get_recorded {
     return $cache if $cache && $nocache;
     return $cache if $cache && $self->mtime >= $Cache{mtime};
 
-    warn "refreshing cache from Cache, mtime = $Cache{mtime}" if $main::Debug;
+    warn "refreshing cache from Cache, mtime = $Cache{mtime}" if $Debug;
     lock %Cache;
     $self->mtime($Cache{mtime});
     return $self->cache(decode_json($Cache{recorded}||''));
@@ -383,28 +397,23 @@ sub _refresh_recorded {
     my $var    = {};
     my $parser = XML::Simple->new(SuppressEmpty=>1);
 
-    my $pid      = open (my $fh,"-|");
-    defined $pid or die "Couldn't fork: #!";
-
-    if (!$pid) {
-	my $curl = WWW::Curl::Easy->new;
-	$curl->setopt(CURLOPT_URL,"http://$Host:6544/Dvr/GetRecordedList");
-	$curl->setopt(CURLOPT_WRITEDATA,\*STDOUT);
-	if ((my $retcode = $curl->perform) != 0) {
-	    warn "failed with ",$curl->strerror($retcode),' ',$curl->errbuf;
-	} elsif ((my $response = $curl->getinfo(CURLINFO_RESPONSE_CODE)) !~ /^2\d\d/) {
-	    warn "failed with response code: $response";
-	}
-	exit 0;
+    my $data;
+    my $curl = WWW::Curl::Easy->new;
+    $curl->setopt(CURLOPT_URL,"http://$Host:6544/Dvr/GetRecordedList");
+    $curl->setopt(CURLOPT_WRITEDATA,\$data);
+    if ((my $retcode = $curl->perform) != 0) {
+	warn "failed with ",$curl->strerror($retcode),' ',$curl->errbuf;
+	return;
+    } elsif ((my $response = $curl->getinfo(CURLINFO_RESPONSE_CODE)) !~ /^2\d\d/) {
+	warn "failed with response code: $response";
+	return;
     }
     
-    eval {
-	my $rec = $parser->XMLin($fh);
-	$self->_build_directory_map($rec,$var);
-	$Cache{recorded} = encode_json($var);
-	$Cache{mtime}    = time();
-	warn "_refresh_recorded(), set mtime to $Cache{mtime}" if $main::Debug;
-    };
+    my $rec = $parser->XMLin($data);
+    $self->_build_directory_map($rec,$var);
+    $Cache{recorded} = encode_json($var);
+    $Cache{mtime}    = time();
+    print STDERR "_refresh_recorded(), set mtime to $Cache{mtime}" if $Debug;
 }
 
 sub _build_directory_map {
@@ -486,7 +495,7 @@ sub _build_directory_map {
 	$map->{directories}{$dir}{$filename}++;
     }
 
-#    print STDERR scalar keys %recordings," recordings retrieved\n";
+    print STDERR scalar keys %recordings," recordings retrieved\n" if $Debug;
     return $map;
 }
 

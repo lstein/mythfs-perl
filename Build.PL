@@ -12,7 +12,7 @@ my $build = Module::Build->new(
     dist_author       => 'Lincoln Stein <lincoln.stein@oicr.on.ca>',
     configure_requires => { 'Module::Build' => 0 },
     requires          => {
-      'Fuse'         => '0.09',
+      'Fuse'         => '0.14',
       'WWW::Curl'    => '4.15',
       'Date::Parse'  => '2.30',
       'XML::Simple'  => '2.18',

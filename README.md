@@ -31,13 +31,22 @@ If you get messages about missing dependencies, run:
 
 and then "sudo ./Build install".
 
-Your Perl must have been compiled with IThreads in order for this
-script to work. To check if this is the case. you may run:
+IMPORTANT: Fuse.pm version 0.14 is required for proper threaded
+operation under Perl 5.14 and higher, but the version currently on
+CPAN fails regression tests on some platforms. I have found that the
+easiest way to get a fully operational Fuse module is to clone and
+compile a patched version of the source:
 
 <pre>
- <b>$ perl -V | grep useithreads</b>
-    useithreads=define, usemultiplicity=define
+ $ <b>git clone git://github.com/isync/perl-fuse.git</b>
+ $ <b>cd perl-fuse</b>
+ $ <b>perl Makefile.PL</b>
+ $ <b>make test</b>
+ $ <b>sudo make install</b>
 </pre>
+
+For best performance, Perl must have been compiled with IThreads.
+Threading will be automatically disabled if not available.
 
 Usage
 =====
@@ -52,8 +61,7 @@ a local filesystem named "/tmp/mythfs" use this command:
 The script will fork into the background and should be stopped with
 fusermount. The mounted /tmp/mythfs directory will contain a series of
 human-readable recordings organized by title (directory) and subtitle
-(file). In the case that there is no subtitle, then the recording file
-will be placed into the top level of the directory.
+(file). 
 
 To unmount:
 
@@ -64,13 +72,14 @@ To unmount:
 Note do NOT try to kill the mythfs.pl process. This will only cause a
 hung filesystem that needs to be unmounted with fusermount.
 
-There are a number of options that you can pass to mythfs.pl, the most
-useful of which is "-o allow_other". If this is present, then others
-on the system (including root) can see the mounted filesystem. Call
-with the -h option for more help.
+There are a number of options that you can pass to mythfs.pl,
+including the ability to customize the filesystem layout and set the
+interval that the backend is checked for new and deleted
+recordings. Call mythfs.pl with the -h option for the complete help
+text.
 
-Understanding the Directory Layout
-==================================
+Understanding the Default Directory Layout
+==========================================
 
 Recordings that are part of a series usually have a title (the series
 name) and subtitle (the episode name). Such recordings are displayed
@@ -111,6 +120,9 @@ Here is an example directory listing:
  -r--r--r-- 1 lstein lstein 3512038152 Apr 24 00:00 Flirting With Disaster 2013-04-24-00:00.mpg
 </pre>
 
+Customizing the Directory Listing
+=================================
+
 Troubleshooting
 ===============
 
@@ -122,4 +134,4 @@ Author
 ======
 
 Lincoln Stein <lincoln.stein@gmail.com>
-3 May 2013
+8 May 2013
