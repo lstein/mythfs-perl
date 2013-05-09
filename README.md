@@ -205,6 +205,21 @@ the channel number and recording start time, for example:
  Masterpiece Classic/Downtown Abbey_17_1-2013-02-11T02:00.mpg
  Masterpiece Classic/Downtown Abbey_17_1-2013-03-10T06:00.mpg
 
+Caching
+=======
+
+New and updated recordings will appear in the filesystem after a
+slight delay due to the manner in which the script caches the
+recording list. By default the backend is only checked for updates
+every 10 minutes, but you can adjust this using the --cachetime
+option, which takes the interval in minutes at which the system
+checks for new and updated recordings.
+
+For example, this command will reduce the update interval to 2
+minutes:
+
+  $ <b>mythfs.pl MyHost --cachetime=2 /tmp/mythfs</b>
+
 Fuse Notes
 ==========
 
