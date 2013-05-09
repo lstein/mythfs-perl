@@ -20,10 +20,10 @@ use warnings;
 use threads;
 use threads::shared;
 use Thread::Semaphore;
+use HTTP::Lite;
 use Getopt::Long qw(:config no_ignore_case);
 use Fuse 'fuse_get_context';
 use File::Spec;
-use WWW::Curl::Easy;
 use Config;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
@@ -208,17 +208,18 @@ sub e_read {
     my $sg       = $e->{storage};
     my $byterange= $offset.'-'.($offset+$size-1);
 
+    my $http = HTTP::Lite->new;
+    $http->add_req_header(Range => $byterange);
+
+    # by placing the request between semaphores, we ensure no more than MAX_GETS 
+    # simultaneous fetches on the backend.
     $ReadSemaphore->down();
-    my $content;
-    my $curl = WWW::Curl::Easy->new;
-    $curl->setopt(CURLOPT_URL,"http://$host:$HTTPPort/Content/GetFile?StorageGroup=$sg&FileName=$basename");
-    $curl->setopt(CURLOPT_HTTPHEADER,["Range: $byterange"]);
-    $curl->setopt(CURLOPT_WRITEDATA,\$content);
-    my $retcode = $curl->perform;
+    my $retcode = $http->request("http://$host:$HTTPPort/Content/GetFile?StorageGroup=$sg&FileName=$basename");
     $ReadSemaphore->up();
-    return -ECONNABORTED() unless $retcode==0;
-    return -ECONNABORTED() unless $curl->getinfo(CURLINFO_RESPONSE_CODE) =~ /^2\d\d/;
-    return $content;
+
+    return -ECONNABORTED() unless $retcode;
+    return -ECONNABORTED() unless $retcode =~ /^2\d\d/;
+    return $http->body;
 }
 
 sub e_getdir {
@@ -289,8 +290,8 @@ sub list_patterns_and_die {
 package Recorded;
 use strict;
 use POSIX 'strftime';
+use HTTP::Lite;
 use JSON qw(encode_json decode_json);
-use WWW::Curl::Easy;
 use Date::Parse 'str2time';
 use XML::Simple;
 use Carp 'croak';
@@ -543,19 +544,14 @@ sub _fetch_recorded_data {
 
     return $self->_dummy_data if $self->_dummy_data;
 
-    my $data;
-    my $curl = WWW::Curl::Easy->new;
-    $curl->setopt(CURLOPT_URL,"http://$Host:$HTTPPort/Dvr/GetRecordedList");
-    $curl->setopt(CURLOPT_WRITEDATA,\$data);
-    if ((my $retcode = $curl->perform) != 0) {
-	warn "failed with ",$curl->strerror($retcode);
-	return;
-    } elsif ((my $response = $curl->getinfo(CURLINFO_RESPONSE_CODE)) !~ /^2\d\d/) {
-	warn "failed with response code: $response";
+    my $http     = HTTP::Lite->new;
+    my $retcode  = $http->request("http://$Host:$HTTPPort/Dvr/GetRecordedList");
+    unless ($retcode && $retcode =~ /^2\d\d/) {
+	warn "request failed with $retcode ",$http->status_message;
 	return;
     }
 
-    return $data;
+    return $http->body;
 }
 
 sub _build_directory_map {
