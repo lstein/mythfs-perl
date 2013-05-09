@@ -1,3 +1,6 @@
+1.23 Thu May  9 15:26:28 EDT 2013
+     * Replace WWW::Curl with HTTP::Lite due to thread-related crashes in Curl library.     
+
 1.22 Wed May  8 23:27:17 EDT 2013
      * Always create an automatic file named .fuse-mythfs containing version and author information.
      * Added copyright and license information.
