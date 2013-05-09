@@ -240,5 +240,10 @@ issues to https://github.com/lstein/mythfs-perl.
 Author
 ======
 
-Lincoln Stein <lincoln.stein@gmail.com>
-8 May 2013
+Copyright 2013, Lincoln D. Stein <lincoln.stein@gmail.com>
+
+License
+=======
+
+This package is distributed under the terms of the Perl Artistic
+License 2.0. See http://www.perlfoundation.org/artistic_license_2_0.

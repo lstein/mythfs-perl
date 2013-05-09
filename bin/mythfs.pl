@@ -1,4 +1,19 @@
 #!/usr/bin/perl
+ 
+=head1 NAME
+
+mythfs.pl - Mount Mythtv recordings using FUSE
+
+=head1 AUTHOR
+
+Copyright 2013, Lincoln D. Stein <lincoln.stein@gmail.com>
+
+=head1 LICENSE
+
+This package is distributed under the terms of the Perl Artistic
+License 2.0. See http://www.perlfoundation.org/artistic_license_2_0.
+
+=cut
 
 use strict;
 use warnings;
@@ -12,9 +27,10 @@ use WWW::Curl::Easy;
 use Config;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
-our $VERSION = '1.20';
+our $VERSION = '1.22';
 use constant CACHE_TIME => 10; # minutes
 use constant MAX_GETS   => 8;  # maximum number of simultaneous file fetches
+use constant MARKER_FILE=> '.fuse-mythfs';
 
 my %Cache    :shared;
 my $ReadSemaphore = Thread::Semaphore->new(MAX_GETS);
@@ -94,10 +110,12 @@ $mountpoint    = File::Spec->rel2abs($mountpoint);
 
 my $options  = join(',',@FuseOptions,'ro');
 
-$Recorded = Recorded->new($Pattern,$XMLDummyDataPath);
+die "Myth filesystem is already mounted on $mountpoint. Use fusermount -u $mountpoint to unmount.\n"
+    if -e "$mountpoint/".MARKER_FILE;
 
-start_update_thread();
 become_daemon() unless $NoDaemon;
+$Recorded = Recorded->new($Pattern,$XMLDummyDataPath);
+start_update_thread();
 
 Fuse::main(mountpoint => $mountpoint,
 	   getdir     => 'main::e_getdir',
@@ -157,6 +175,8 @@ sub fixup {
 
 sub e_open {
     my $path = fixup(shift);
+    return 0 if $path eq MARKER_FILE;
+
     my $r = $Recorded->get_recorded;
     return -ENOENT() unless $r->{paths}{$path} || $r->{directories}{$path};
     return -EISDIR() if $r->{directories}{$path};
@@ -173,6 +193,12 @@ sub e_read {
     $offset ||= 0;
 
     $path = fixup($path);
+
+    if ($path eq MARKER_FILE) {
+	my $content = copyright_and_version();
+	return substr($content,$offset,$size);
+    }
+
     my $r = $Recorded->get_recorded('use_cached');
     my $e = $r->{paths}{$path} or return -ENOENT();
     return -EINVAL() if $offset > $e->{length};
@@ -201,6 +227,7 @@ sub e_getdir {
     my $r = $Recorded->get_recorded;
     my @entries = keys %{$r->{directories}{$path}};
     return -ENOENT() unless @entries;
+    unshift @entries,MARKER_FILE if $path eq '.';
     return ('.','..',@entries,0);
 }
 
@@ -220,6 +247,13 @@ sub e_getattr {
     my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) 
 	= (0,0,0,1,@{$context}{'gid','uid'},1,1024);
 
+    if ($path eq MARKER_FILE) { # special case
+	my $contents = copyright_and_version();
+	return (
+	    $dev,$ino,0100000|0444,$nlink,$uid,$gid,$rdev,
+	    length($contents),time(),time(),time(),$blksize,$blocks);
+    }
+
     my $r = $Recorded->get_recorded;
     my $e = $r->{paths}{$path} or return -ENOENT();
 
@@ -235,6 +269,14 @@ sub e_getattr {
 
     return ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,
 	    $size,$atime,$mtime,$ctime,$blksize,$blocks);
+}
+
+sub copyright_and_version {
+    return <<END;
+mythfs.pl version $VERSION. 
+Copyright 2013 Lincoln D. Stein <lincoln.stein\@gmail.com>. 
+Distributed under Perl Artistic License Version 2.
+END
 }
 
 sub list_patterns_and_die {
@@ -418,6 +460,7 @@ sub recording2path {
     if ($Delimiter) {
 	foreach (@components) {
 	    s/${Delimiter}{2,}/$Delimiter/g;
+	    s/${Delimiter}(\s+)/$1/g;
 	    s/$Delimiter$//;
 	}
     }
@@ -674,4 +717,3 @@ The following substitution patterns can be used in recording paths.
     %oj  = Original Airdate:  day of month
     %od  = Original Airdate:  day of month, leading zero
     %%   = a literal % character
- 
