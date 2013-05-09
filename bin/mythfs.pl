@@ -27,7 +27,7 @@ use File::Spec;
 use Config;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
-our $VERSION = '1.22';
+our $VERSION = '1.23';
 use constant CACHE_TIME => 10; # minutes
 use constant MAX_GETS   => 8;  # maximum number of simultaneous file fetches
 use constant MARKER_FILE=> '.fuse-mythfs';
