@@ -13,7 +13,7 @@ my $build = Module::Build->new(
     configure_requires => { 'Module::Build' => 0 },
     requires          => {
       'Fuse'         => '0.09',
-      'HTTP::Lite'   => '2.31',
+      'HTTP::Lite'   => '2.30',
       'Date::Parse'  => '2.30',
       'XML::Simple'  => '2.18',
       'JSON'         => 0,
