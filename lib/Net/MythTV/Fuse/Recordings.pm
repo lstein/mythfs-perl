@@ -12,6 +12,7 @@ use Config;
 use Carp 'croak';
 
 my %Cache    :shared;
+my $Package = __PACKAGE__;
 
 use constant Templates => {
     T  => '{Title}',
@@ -111,70 +112,62 @@ use constant Templates => {
     '%'  => '%',
     };
 
+foreach (qw(debug backend port dummy_data cache cachetime threaded
+            pattern deliiter mtime)) {
+    eval <<END;
+sub ${Package}::${_} {
+    my \$self = shift;
+    \$self->{$_} = shift if \@_;
+    return \$self->{$_};
+}
+END
+}
+
+
+
 sub new {
     my $class   = shift;
-    my $pattern = shift;
+    my $backend = shift or croak "Usage: $class->new(\$backend_hostname)";
 
     my $self =  bless {
-	pattern   => $pattern,
-	cache     => undef,
+	backend   => $backend,
+	port      => 6544,
+	pattern   => '%T/%S',
 	cachetime => 60*10,
 	threaded  => $Config{useithreads},
+	delimiter => undef,
+	debug     => 0,
 	mtime     => 0,
+	cache     => undef,
     },ref $class || $class;
-
-    # for debugging, we allow caller to pass the path to a file containing
-    # the XML data
-    if (my $dummy_data_path = shift) {
-	open my $fh,$dummy_data_path or croak "$dummy_data_path: $!";
-	local $/;
-	my $dummy_data = <$fh>;
-	$self->_dummy_data($dummy_data) if $dummy_data;
-    }
 
     return $self;
 }
 
-sub _dummy_data {
+sub load_dummy_data {
     my $self = shift;
-    $self->{dummy_data} = shift if @_;
-    return $self->{dummy_data};
+    my $dummy_data_path = shift;
+    open my $fh,$dummy_data_path or croak "$dummy_data_path: $!";
+    local $/;
+    my $dummy_data = <$fh>;
+    $self->dummy_data($dummy_data) if $dummy_data;
 }
 
-sub debug {
+sub start_update_thread {
     my $self = shift;
-    $self->{debug} = shift if @_;
-    return $self->{debug};
-}
 
-sub cache {
-    my $self = shift;
-    $self->{cache} = shift if @_;
-    return $self->{cache};
-}
-
-sub cachetime {
-    my $self = shift;
-    $self->{cachetime} = shift if @_;
-    return $self->{cachetime};
-}
-
-sub threaded {
-    my $self = shift;
-    $self->{threaded} = shift if @_;
-    return $self->{threaded};
-}
-
-sub delimiter {
-    my $self = shift;
-    $self->{delimiter} = shift if @_;
-    return $self->{delimiter};
-}
-
-sub mtime {
-    my $self = shift;
-    $self->{mtime} = shift if @_;
-    return $self->{mtime};
+    $self->_refresh_recorded 
+	or croak "Could not contact backend at ",$self->backend,':',$self->port;
+    return unless $self->threaded;
+    my $thr = threads->create(
+	sub {
+	    while (1) {
+		sleep ($self->cachetime);
+		$self->_refresh_recorded;
+	    }
+	}
+	);
+    $thr->detach();
 }
 
 sub get_recorded {
@@ -186,7 +179,7 @@ sub get_recorded {
     return $cache if $cache && $nocache;
 
     $self->_refresh_recorded if !$self->threaded && (time() - $Cache{mtime} >= $self->cachetime);
-    return $cache if $cache && $self->mtime >= $Cache{mtime};
+    return $cache            if $cache && $self->mtime >= $Cache{mtime};
 
     warn scalar localtime()," refreshing thread-level cache, mtime = $Cache{mtime}\n" if $self->debug;
     lock %Cache;
@@ -267,7 +260,7 @@ END
 sub _refresh_recorded {
     my $self = shift;
 
-    print  STDERR scalar(localtime())," Refreshing recording list..." if $Debug;
+    print  STDERR scalar(localtime())," Refreshing recording list..." if $self->debug;
 
     lock %Cache;
     my $var    = {};
@@ -277,7 +270,7 @@ sub _refresh_recorded {
     $self->_build_directory_map($rec,$var);
     $Cache{recorded} = encode_json($var);
     $Cache{mtime}    = time();
-    print STDERR "mtime set to $Cache{mtime}\n" if $Debug;
+    print STDERR "mtime set to $Cache{mtime}\n" if $self->debug;
 
     return 1;
 }
@@ -287,8 +280,11 @@ sub _fetch_recorded_data {
 
     return $self->_dummy_data if $self->_dummy_data;
 
+    my $host = $self->backend;
+    my $port = $self->port;
+
     my $http     = HTTP::Lite->new;
-    my $retcode  = $http->request("http://$Host:$HTTPPort/Dvr/GetRecordedList");
+    my $retcode  = $http->request("http://$host:$port/Dvr/GetRecordedList");
     unless ($retcode && $retcode =~ /^2\d\d/) {
 	warn "request failed with $retcode ",$http->status_message;
 	return;
@@ -377,7 +373,7 @@ sub _build_directory_map {
 	$map->{directories}{$dir}{$filename}++;
     }
 
-    print STDERR scalar keys %recordings," recordings retrieved..." if $Debug;
+    print STDERR scalar keys %recordings," recordings retrieved..." if $self->debug;
     return $map;
 }
 
