@@ -6,7 +6,53 @@ mythfs.pl - Mount Fuse filesystem to display TV recordings managed by a MythTV b
 
 =head1 SYNOPSIS
 
- % mythfs.pl mythbackend.mydomain.org /tmp/mythtv
+ % mythfs.pl [options] <Hostname of Backend> <mount point>
+
+Long Options:
+
+  --pattern=<pattern>          filename pattern default ("%T/%S")
+  --trim=<char>                 trim redundant occurrences of this character (no default)
+
+  --mountpt=<path>              mountpoint/directory for locally stored recordings (no default)
+  --Port=<port>                 HTTP request port on backend (6544)
+  --cachetime=<time>            cache time for recording names (10 minutes)
+
+  --unmount                     unmount the indicated directory
+  --foreground                  remain in foreground (false)
+  --nothreads                   disable threads (false)
+  --debug=<1,2>                 enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
+
+  --option=allow_other          allow other accounts to access filesystem (false)
+  --option=default_permissions  enable permission checking by kernel (false)
+  --option=fsname=name          set filesystem name (none)
+  --option=use_ino              let filesystem set inode numbers (false)
+  --option=nonempty             allow mounts over non-empty file/dir (false)
+
+  --help                        this text
+  --man                         full manual page
+
+Short Options:
+
+  -p <pattern>           filename pattern default ("%T/%S")
+  -t <char>              trim redundant occurrences of this character (no default)
+
+  -m <path>              mountpoint/directory for locally stored recordings (no default)
+  -P <port>              HTTP request port on backend (6544)
+  -c <time>              cache time for recording names (10 minutes)
+
+  -u                     unmount the indicated directory
+  -f                     remain in foreground (false)
+  -n                     disable threads (false)
+  -d <1,2>               enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
+
+  -o allow_other          allow other accounts to access filesystem (false)
+  -o default_permissions  enable permission checking by kernel (false)
+  -o fsname=name          set filesystem name (none)
+  -o use_ino              let filesystem set inode numbers (false)
+  -o nonempty             allow mounts over non-empty file/dir (false)
+
+  -h                      this text
+  -m                      full manual page
 
 =head1 DESCRIPTION
 
@@ -14,22 +60,6 @@ This script will create a virtual filesystem representing the
 recordings made by a MythTV (www.mythtv.org) backend. You must provide
 the name or IP address of the backend host, and the path to an empty
 directory to mount the virtual filesystem on.
-
-Options:
-   --unmount                     unmount the indicated directory
-   --cachetime=<time>            cache time for recording names (10 minutes)
-   --option=allow_other          allow other accounts to access filesystem (false)
-   --option=default_permissions  enable permission checking by kernel (false)
-   --option=fsname=name          set filesystem name (none)
-   --option=use_ino              let filesystem set inode numbers (false)
-   --option=nonempty             allow mounts over non-empty file/dir (false)
-   --pattern=<patterns>          filename pattern default ("%T/%S")
-   --mountpt=<path>              mountpoint/directory for locally stored recordings (no default)
-   --trim=<char>                 trim redundant occurrences of this character (no default)
-   --Port=<port>                 HTTP request port on backend (6544)
-   --foreground                  remain in foreground (false)
-   --debug=<1,2>                 enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
-   --nothreads                   disable threads (false)
 
 Filename patterns consist of regular characters and substitution
 patterns beginning with a %. Slashes (\/) will delimit directories and
@@ -271,74 +301,38 @@ License 2.0. See http://www.perlfoundation.org/artistic_license_2_0.
 use strict;
 use warnings;
 use Net::MythTV::Fuse;
-use Getopt::Long qw(:config no_ignore_case);
 use File::Spec;
-use Fuse;
 use Config;
 use POSIX 'setsid';
+
+use Getopt::Long qw(:config no_ignore_case);
+use Pod::Usage;
 
 my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,
     $LocalMount,$NoThreads,$Delimiter,
     $HTTPPort,$UnMount,
+    $Help,$Man,
     $XMLDummyDataPath, # for debugging
     );
-my $Usage = <<END;
-Usage: $0 <Myth backend Host> <mountpoint>
 
-Fuse filesystem to mount recordings from Myth backend running on Host
-at the directory indicated by mountpoint: e.g. "mythfs.pl myhost
-/tmp/mythfs".
+GetOptions(
+    'help|h|?'   => \$Help,
+    'man'        => \$Man,
+    'option:s'   => \@FuseOptions,
+    'cachetime=i'=> \$CacheTime,
+    'foreground' => \$NoDaemon,
+    'pattern=s'  => \$Pattern,
+    'debug:i'    => \$Debug,
+    'trim=s'     => \$Delimiter,
+    'mountpt=s'  => \$LocalMount,
+    'Port=i'     => \$HTTPPort,
+    'nothreads'  => \$NoThreads,
+    'unmount'    => \$UnMount,
+    'XMLDummy=s' => \$XMLDummyDataPath,  # for debugging
+ ) or pod2usage(-verbose=>2);
 
-Options:
-   --unmount                     unmount a previously-mounted filesystem
-   --cachetime=<time>            cache time for recording names (10 minutes)
-   --option=allow_other          allow other accounts to access filesystem (false)
-   --option=default_permissions  enable permission checking by kernel (false)
-   --option=fsname=name          set filesystem name (none)
-   --option=use_ino              let filesystem set inode numbers (false)
-   --option=nonempty             allow mounts over non-empty file/dir (false)
-   --pattern=<patterns>          filename pattern default ("%T/%S")
-   --mountpt=<path>              mountpoint/directory for locally stored recordings (no default)
-   --trim=<char>                 trim redundant occurrences of this character (no default)
-   --Port=<port>                 HTTP request port on backend (6544)
-   --foreground                  remain in foreground (false)
-   --debug=<1,2>                 enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
-   --nothreads                   disable threads (false)
-
-Filename patterns consist of regular characters and substitution
-patterns beginning with a %. Slashes (\/) will delimit directories and
-subdirectories. Empty directory names will be collapsed. The default
-is "%T/%S", the recording title followed by the subtitle.  Run this
-command with "-p help" to get a list of all the substitution patterns
-recognized.
-
-By default, files will be streamed as needed from the myth
-backend. However, if the recording files are accessible directly from
-the filesystem (e.g. via an NFS mount), you can provide the path to
-this directory using the --mountpt option. The filenames will then be
-presented as symbolic links.
-
-Command line switches can abbreviated to single letters, so you can
-use "-p %T/%S" instead of "--pattern=%T/%S".
-
-If you request unmounting (using --unmount or -u), the first
-non-option argument is interpreted as the mountpoint, not the backend
-hostname.
-
-END
-    ;
-GetOptions('option:s'   => \@FuseOptions,
-	   'cachetime=i'=> \$CacheTime,
-	   'foreground' => \$NoDaemon,
-	   'pattern=s'  => \$Pattern,
-	   'debug:i'    => \$Debug,
-	   'trim=s'     => \$Delimiter,
-	   'mountpt=s'  => \$LocalMount,
-	   'Port=i'     => \$HTTPPort,
-	   'nothreads'  => \$NoThreads,
-	   'unmount'    => \$UnMount,
-	   'XMLDummy=s' => \$XMLDummyDataPath,  # for debugging
-    ) or die $Usage;
+ pod2usage(1)                          if $Help;
+ pod2usage(-exitstatus=>0,-verbose=>2) if $Man;
 
 list_patterns_and_die() if $Pattern && $Pattern eq 'help';
 $NoThreads  ||= check_disable_threads();
@@ -354,8 +348,8 @@ if ($UnMount) {
     exec 'fusermount','-u',$mountpoint;
 }
 
-my $host       = shift or die $Usage;
-my $mountpoint = shift or die $Usage;
+my $host       = shift or pod2usage(1);
+my $mountpoint = shift or pod2usage(1);
 $mountpoint    = File::Spec->rel2abs($mountpoint);
 
 my $options  = join(',',@FuseOptions,'ro');
