@@ -305,7 +305,7 @@ use File::Spec;
 use Config;
 use POSIX 'setsid';
 
-use Getopt::Long qw(:config no_ignore_case);
+use Getopt::Long qw(:config no_ignore_case bundling_override);
 use Pod::Usage;
 
 my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,
@@ -316,19 +316,19 @@ my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,
     );
 
 GetOptions(
-    'help|h|?'   => \$Help,
-    'man'        => \$Man,
-    'option:s'   => \@FuseOptions,
-    'cachetime=i'=> \$CacheTime,
-    'foreground' => \$NoDaemon,
-    'pattern=s'  => \$Pattern,
-    'debug:i'    => \$Debug,
-    'trim=s'     => \$Delimiter,
-    'mountpt=s'  => \$LocalMount,
-    'Port=i'     => \$HTTPPort,
-    'nothreads'  => \$NoThreads,
-    'unmount'    => \$UnMount,
-    'XMLDummy=s' => \$XMLDummyDataPath,  # for debugging
+    'help|h|?'     => \$Help,
+    'man|m'        => \$Man,
+    'option|o:s'   => \@FuseOptions,
+    'cachetime|c=i'=> \$CacheTime,
+    'foreground|f' => \$NoDaemon,
+    'pattern|p=s'  => \$Pattern,
+    'debug|d:i'    => \$Debug,
+    'trim|t=s'     => \$Delimiter,
+    'mountpt|m=s'  => \$LocalMount,
+    'Port|P=i'     => \$HTTPPort,
+    'nothreads|n'  => \$NoThreads,
+    'unmount|u'    => \$UnMount,
+    'XMLDummy|X=s' => \$XMLDummyDataPath,  # for debugging
  ) or pod2usage(-verbose=>2);
 
  pod2usage(1)                          if $Help;
