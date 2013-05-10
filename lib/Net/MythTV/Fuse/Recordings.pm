@@ -1,5 +1,38 @@
 package Net::MythTV::Fuse::Recordings;
 
+=head1 NAME
+
+Net::MythTV::Fuse::Recordings - Manage list of MythTV recordings for MythTV Fuse filesystem
+
+=head1 SYNOPSIS
+
+ $recordings = Net::MythTV::Fuse::Recordings->new({backend   => 'mythbackend.domain.org',
+                                                   pattern   => '%C/%T/%S',
+                                                   cachetime => 120,
+                                                   maxgets   => 6,
+                                                   threaded  => 1,
+                                                   debug     => 1}
+                                                 );
+ $recordings->start_update_thread();
+ @paths = $recordings->entries('.');
+ $recordings->valid_path('Firefly/Serenity.mpg') or die;
+ $recordings->is_dir('Firefly')                  or die;
+ ($status,$content) = $recordings->download_recorded_file('Firefly/Serenity.mpg',1024,0);
+
+=head1 DESCRIPTION
+
+This is a utility class used by Net::MythTV::Fuse which handles all
+interaction with the backend. Using the MythTV 0.25 API, the module
+maintains a cache of current recordings, translates them into a series
+of virtual directory listings according to a template, and can
+download segments of individual recordings from a local or remote
+backend.
+
+=head1 METHODS
+
+=cut
+
+
 use strict;
 use POSIX 'strftime';
 use HTTP::Lite;
@@ -8,11 +41,16 @@ use Date::Parse 'str2time';
 use XML::Simple;
 use threads;
 use threads::shared;
+use Thread::Semaphore;
 use Config;
 use Carp 'croak';
 
+use constant CACHETIME => 60*5;  # 5 minutes
+use constant MAXGETS   => 8;     # allow 8 simultaneous http gets 
+
+# This single shared variable caches the recorded list from the backend as a JSONized string.
+# Within each thread, the list is then unserialized and temporarily cached in each thread's memory.
 my %Cache    :shared;
-my $Package = __PACKAGE__;
 
 use constant Templates => {
     T  => '{Title}',
@@ -112,8 +150,9 @@ use constant Templates => {
     '%'  => '%',
     };
 
-foreach (qw(debug backend port dummy_data cache cachetime threaded
-            pattern deliiter mtime)) {
+my $Package = __PACKAGE__;
+foreach (qw(debug backend port dummy_data cache cachetime maxgets threaded
+            pattern delimiter mtime localmount semaphore)) {
     eval <<END;
 sub ${Package}::${_} {
     my \$self = shift;
@@ -123,35 +162,55 @@ sub ${Package}::${_} {
 END
 }
 
+=head2 $r = Net::MythTV::Fuse::Recordings->new(\%options)
 
+Create a new Recordings object. Options are passed as a hashref and
+may contain any of the following keys:
+
+ backend       IP address of the backend (localhost)
+ port          Control port for the backend (6544)
+ pattern       Template for transforming recordings into paths (%T/%S)
+ delimiter     Trim this string from the pathname if it is dangling or occurs multiple times (none)
+ cachetime     Maximum time to cache recorded list before refreshing from backend (300 sec)
+ maxgets       Maximum number of simultaneous file fetches to perform on backend (8)
+ threaded      Run the cache fill process as an ithread (true)
+ debug         Turn on debugging messages (false)
+ dummy_data_path  For debugging, pass path to backend recording XML listing
+
+See the help text for mythfs.pl for more information on these arguments.
+
+=cut
 
 sub new {
     my $class   = shift;
-    my $backend = shift or croak "Usage: $class->new(\$backend_hostname)";
-
+    my $options = shift;
+    $options->{backend} or croak "Usage: $class->new({backend=>\$backend_hostname,\@other_options})";
+    
     my $self =  bless {
-	backend   => $backend,
+	backend   => 'localhost',
 	port      => 6544,
 	pattern   => '%T/%S',
-	cachetime => 60*10,
+	cachetime => CACHETIME,
+	maxgets   => MAXGETS,
 	threaded  => $Config{useithreads},
 	delimiter => undef,
 	debug     => 0,
+	%$options,           # these will override
 	mtime     => 0,
 	cache     => undef,
     },ref $class || $class;
 
+    $self->semaphore(Thread::Semaphore->new($self->maxgets)),
     return $self;
 }
 
-sub load_dummy_data {
-    my $self = shift;
-    my $dummy_data_path = shift;
-    open my $fh,$dummy_data_path or croak "$dummy_data_path: $!";
-    local $/;
-    my $dummy_data = <$fh>;
-    $self->dummy_data($dummy_data) if $dummy_data;
-}
+=head2 $r->start_update_thread
+
+Start the thread that periodically fetches and caches the recording
+data from the server. Will run as a detached thread until the process
+terminates.
+
+=cut
 
 sub start_update_thread {
     my $self = shift;
@@ -170,6 +229,89 @@ sub start_update_thread {
     $thr->detach();
 }
 
+=head2 $recordings = $r->get_recorded
+
+Return a data structure corresponding to the current recording
+list. The data structure is a hashref with two top-level keys:
+"directories", which list directory names and their contents, and
+"paths" which give size and other attributes for each directory,
+subdirectory and file. Here is an example:
+
+ {
+  'directories' => {
+       '.' => {
+               '007 Licence To Kill.mpg' => 1,
+               'A Funny Thing Happened on the Way to the Forum.mpg' => 1,
+               'Alfred Hitchcock Presents' => 5,
+               'American Dad' => 9,
+                ...
+               },
+       'Alfred Hitchcock Presents' => {
+               'Back for Christmas.mpg' => 1,
+               'Dead Weight.mpg' => 1,
+               'Rose Garden.mpg' => 1,
+              },
+       'American Dad' => {
+               'Dr. Klaustus.mpg' => 1,
+               'Flirting With Disaster.mpg' => 1,
+               'Gorillas in the Mist.mpg' => 1,
+              },
+         ...
+     },
+  'paths' => {
+       '.' => {
+               'ctime' => 1368074100,
+               'length' => 240,
+               'mtime' => 1368076875,
+               'type' => 'directory'
+              },
+       '007 Licence To Kill.mpg' => {
+               'basename' => '1111_20121126200000.mpg',
+               'ctime' => 1353978000,
+               'host' => 'myth',
+               'length' => '21262807708',
+               'mtime' => 1357927839,
+               'storage' => 'Default',
+               'type' => 'file'
+              },
+       'A Funny Thing Happened on the Way to the Forum.mpg' => {
+               'basename' => '1191_20121230000000.mpg',
+               'ctime' => 1356843600,
+               'host' => 'myth',
+               'length' => '12298756208',
+               'mtime' => 1357927839,
+               'storage' => 'Default',
+               'type' => 'file'
+              },
+         'Alfred Hitchcock Presents' => {
+               'ctime' => 1362985200,
+               'length' => 5,
+               'mtime' => 1362987680,
+               'type' => 'directory'
+              },
+          'Alfred Hitchcock Presents/Back for Christmas.mpg' => {
+               'basename' => '1022_20121225153000.mpg',
+               'ctime' => 1356467400,
+               'host' => 'myth',
+               'length' => '647625408',
+               'mtime' => 1357927839,
+               'storage' => 'Default',
+               'type' => 'file'
+              },
+          'Alfred Hitchcock Presents/Dead Weight.mpg' => {
+                 'basename' => '1022_20121207000000.mpg',
+                 'ctime' => 1354856400,
+                 'host' => 'myth',
+                 'length' => '647090360',
+                 'mtime' => 1357927839,
+                 'storage' => 'Default',
+                 'type' => 'file'
+               },
+             ...
+     }
+
+=cut
+
 sub get_recorded {
     my $self = shift;
     my $nocache = shift;
@@ -186,6 +328,13 @@ sub get_recorded {
     $self->mtime($Cache{mtime});
     return $self->cache(decode_json($Cache{recorded}||''));
 }
+
+=head2 $path = $r->recording_to_path($metadata)
+
+Given the metadata returned from the backend for a single recording,
+transform this into a pathname using the provided template.
+
+=cut
 
 sub recording2path {
     my $self = shift;
@@ -204,6 +353,134 @@ sub recording2path {
 
     return grep {length} @components;
 }
+
+=head2 @entries = $r->entries($path)
+
+Given a path to a directory in the virtual filesystem, return all
+subentries within that directory. Use '.' to indicate the top level
+directory.
+
+=cut
+
+sub entries {
+    my $self = shift;
+    my $path = shift;
+    my $r = $self->get_recorded;
+    return keys %{$r->{directories}{$path}};
+}
+
+=head2 $name = $r->basename($path)
+
+Given a path to a file in the virtual filesystem, returns the basename
+of the physical file on the backend's storage disk.
+
+=cut
+
+sub basename {
+    my $self = shift;
+    my $path = shift;
+    my $e = $self->entry($path) or return;
+    return $e->{basename};
+}
+
+=head2 $entry = $r->entry($path)
+
+Given a path to a file on the virtual filesystem, returns a hashref
+that provides length, modification time and basename information about
+the recording. This is simply the value of the {path}{$path} key in
+the data structure described for get_recorded():
+
+        {'Alfred Hitchcock Presents/Back for Christmas.mpg' => {
+               'basename' => '1022_20121225153000.mpg',
+               'ctime' => 1356467400,
+               'host' => 'myth',
+               'length' => '647625408',
+               'mtime' => 1357927839,
+               'storage' => 'Default',
+               'type' => 'file'
+              }
+        }
+
+=cut
+
+sub entry {
+    my $self = shift;
+    my $path = shift;
+    my $r = $self->get_recorded;
+    return $r->{paths}{$path};
+}
+
+=head2 $boolean = $r->valid_path($path)
+
+Returns true if the provided path is valid.
+
+=cut
+
+sub valid_path {
+    my $self = shift;
+    my $path = shift;
+    my $r = $self->get_recorded;
+    return $r->{paths}{$path};
+}
+
+
+=head2 $boolean = $r->is_dir($path)
+
+Returns true if the provided path is a directory in the virtual filesystem.
+
+=cut
+
+sub is_dir {
+    my $self = shift;
+    my $path = shift;
+    my $r    = $self->get_recorded;
+    return $r->{paths}{$path}{type} eq 'directory';
+}
+
+=head2 ($status,$content) = $r->download_recorded_file($path,$size,$offset)
+
+Attempts to download the recording corresponding to the indicated
+path. $size and $offset allow you to fetch the indicated portion of
+the recording.
+
+A two-element list is returned. The first element is a status message,
+one of "ok", "not found", "invalid offset", or "connection failed". If
+successful, the second element will be the requested content,
+otherwise undef.
+
+=cut
+
+sub download_recorded_file {
+    my $self = shift;
+    my ($path,$size,$offset) = @_;
+
+    my $r    = $self->get_recorded('use_cached');
+    my $e    = $r->{paths}{$path} or return 'not found';
+    $offset <= $e->{length}       or return 'invalid offset';
+
+    my $basename = $e->{basename};
+    # I'm unsure of whether we should use the host in the XML or the designated backend
+    my $host     = $e->{host} || $self->backend;  
+    my $port     = $self->port;
+    my $sg       = $e->{storage};
+    my $byterange= $offset.'-'.($offset+$size-1);
+
+    my $http = HTTP::Lite->new;
+    $http->add_req_header(Range => $byterange);
+
+    # by placing the request between semaphores, we ensure no more than maxgetws
+    # simultaneous fetches on the backend.
+    $self->semaphore->down();
+    my $retcode = $http->request("http://$host:$port/Content/GetFile?StorageGroup=$sg&FileName=$basename");
+    $self->semaphore->up();
+
+    $retcode && $retcode =~ /^2\d\d/ or return 'connection failed';
+    return ('ok',$http->body);
+}
+
+=head2 $path = $r->apply_pattern($entry)
+
+=cut
 
 sub apply_pattern {
     my $self = shift;
@@ -257,6 +534,15 @@ END
     return $self->{pattern_sub} = $s;
 }
 
+sub load_dummy_data {
+    my $self = shift;
+    my $dummy_data_path = shift;
+    open my $fh,$dummy_data_path or croak "$dummy_data_path: $!";
+    local $/;
+    my $dummy_data = <$fh>;
+    $self->dummy_data($dummy_data) if $dummy_data;
+}
+
 sub _refresh_recorded {
     my $self = shift;
 
@@ -278,7 +564,7 @@ sub _refresh_recorded {
 sub _fetch_recorded_data {
     my $self = shift;
 
-    return $self->_dummy_data if $self->_dummy_data;
+    return $self->dummy_data if $self->dummy_data;
 
     my $host = $self->backend;
     my $port = $self->port;
@@ -377,3 +663,17 @@ sub _build_directory_map {
     return $map;
 }
 
+1;
+
+=head1 AUTHOR
+
+Copyright 2013, Lincoln D. Stein <lincoln.stein@gmail.com>
+
+=head1 LICENSE
+
+This package is distributed under the terms of the Perl Artistic
+License 2.0. See http://www.perlfoundation.org/artistic_license_2_0.
+
+=cut
+
+__END__

@@ -2,7 +2,260 @@
  
 =head1 NAME
 
-mythfs.pl - Mount Mythtv recordings using FUSE
+mythfs.pl - Mount Fuse filesystem to display TV recordings managed by a MythTV backend
+
+=head1 SYNOPSIS
+
+ % mythfs.pl mythbackend.mydomain.org /tmp/mythtv
+
+=head1 DESCRIPTION
+
+This script will create a virtual filesystem representing the
+recordings made by a MythTV (www.mythtv.org) backend. You must provide
+the name or IP address of the backend host, and the path to an empty
+directory to mount the virtual filesystem on.
+
+Options:
+   --unmount                     unmount the indicated directory
+   --cachetime=<time>            cache time for recording names (10 minutes)
+   --option=allow_other          allow other accounts to access filesystem (false)
+   --option=default_permissions  enable permission checking by kernel (false)
+   --option=fsname=name          set filesystem name (none)
+   --option=use_ino              let filesystem set inode numbers (false)
+   --option=nonempty             allow mounts over non-empty file/dir (false)
+   --pattern=<patterns>          filename pattern default ("%T/%S")
+   --mountpt=<path>              mountpoint/directory for locally stored recordings (no default)
+   --trim=<char>                 trim redundant occurrences of this character (no default)
+   --Port=<port>                 HTTP request port on backend (6544)
+   --foreground                  remain in foreground (false)
+   --debug=<1,2>                 enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
+   --nothreads                   disable threads (false)
+
+Filename patterns consist of regular characters and substitution
+patterns beginning with a %. Slashes (\/) will delimit directories and
+subdirectories. Empty directory names will be collapsed. The default
+is "%T/%S", the recording title followed by the subtitle.  Run this
+command with "-p help" to get a list of all the substitution patterns
+recognized.
+
+By default, files will be streamed as needed from the MythTV
+backend. However, if the recording files are accessible directly from
+the filesystem (e.g. via an NFS mount), you can provide the path to
+this directory using the --mountpt option. The filenames will then be
+presented as symbolic links.
+
+Command line switches can abbreviated to single letters, so you can
+use "-p %T/%S" instead of "--pattern=%T/%S".
+
+
+If you request unmounting (using --unmount or -u), the first
+non-option argument is interpreted as the mountpoint, not the backend
+hostname.
+
+=head1 MORE INFORMATION
+
+This is a FUSE filesystem for MythTV (www.mythtv.org).  It uses the
+Myth 0.25 API to mount the TV recordings known to a MythTV master
+backend onto a virtual filesystem on the client machine for convenient
+playback with mplayer or other video tools. Because it uses the MythTV
+network protocol, the recordings do not need to be on a shared
+NFS-mounted disk, nor does the Myth database need to be accessible
+from the client.
+
+=head2 Usage
+
+To mount the recordings contained on the master backend "MyHost" onto
+a local filesystem named "/tmp/mythfs" use this command:
+
+ $ mkdir /tmp/mythfs
+ $ mythfs.pl MyHost /tmp/mythfs
+
+The script will fork into the background and should be stopped with
+fusermount. The mounted /tmp/mythfs directory will contain a series of
+human-readable recordings organized by title (directory) and subtitle
+(file). 
+
+To unmount:
+
+ $ fusermount -u /tmp/mythfs
+
+or
+
+ $mythfs.pl -u /tmp/mythfs
+
+NOTE: Do NOT try to kill the mythfs.pl process. This will only cause a
+hung filesystem that needs to be unmounted with fusermount.
+
+There are a number of options that you can pass to mythfs.pl,
+including the ability to customize the filesystem layout and set the
+interval that the backend is checked for new and deleted
+recordings. Call mythfs.pl with the -h option for the complete help
+text.
+
+=head2 Local Recordings
+
+The default behavior of this filesystem is to use the Myth API to
+stream recordings across the network when you attempt to read from
+them. This is done in an efficient way that fetches just the portion
+of the file you wish to read. However, if the underlying recording
+files are directly accessible (either in a regular director or via an
+NFS mount), you can get better performance by passing mythfs.pl the
+--mountpt option with the path to the directory in which the
+recordings can be found. The filesystem will then be set up as a set
+of symbolic links that point from a human readable file name to the
+recording file.
+
+The main advantage of creating symbolic links is that NFSv4 can be
+significantly faster than the backend streaming protocol -- about 1.6X
+in my informal tests. The main limitation is that this mode does not
+understand storage groups, so all recordings need to be located in a
+single storage group in a locally-accessible directory. However if a
+recording file is not found in local directory, then mythfs.pl will
+fall back to the streaming protocol, so the recording is accessible
+one way or another.
+
+=head2 The Default Directory Layout
+
+Recordings that are part of a series usually have a title (the series
+name) and subtitle (the episode name). Such recordings are displayed
+using a two-tier directory structure in which the top-level directory
+is the series name, and the contents are a series of recorded
+episodes. The corresponding pattern (as described in the next section)
+is "%T/%S".
+
+For recordings that do not have a subtitle, typically one-off movie
+showings, the recording is placed at the top level.
+
+If needed for uniqueness, the channel number and time the recorded was
+started is attached to the filename, along with an extension
+indicating the recording type (.mpg or .nuv). The file create and
+modification times correspond to the recording start time. For
+directories, the times are set to the most recent recording contained
+within the directory.
+
+Here is an example directory listing:
+
+ % ls -lR  /tmp/mythfs
+ total 35
+ -r--r--r-- 1 lstein lstein 12298756208 Dec 30 00:00 A Funny Thing Happened on the Way to the Forum.mpg
+ -r--r--r-- 1 lstein lstein 14172577964 Dec 25 16:00 A Heartland Christmas.mpg
+ dr-xr-xr-x 1 lstein lstein           5 Mar 11 03:00 Alfred Hitchcock Presents
+ dr-xr-xr-x 1 lstein lstein           8 May  2 00:00 American Dad
+ ...
+
+ /home/lstein/Myth/Alfred Hitchcock Presents:
+ total 3
+ -r--r--r-- 1 lstein lstein 647625408 Dec 25 15:30 Back for Christmas.mpg
+ -r--r--r-- 1 lstein lstein 647090360 Dec  7 00:00 Dead Weight.mpg
+ -r--r--r-- 1 lstein lstein 660841056 Mar 11 03:00 Rose Garden.mpg
+ -r--r--r-- 1 lstein lstein 647524452 Dec 25 00:00 Santa Claus and the 10th Ave. Kid.mpg
+ -r--r--r-- 1 lstein lstein 649819932 Dec 27 00:00 The Contest of Aaron Gold.mpg
+
+ /home/lstein/Myth/American Dad:
+ total 4
+ -r--r--r-- 1 lstein lstein 3512038152 Apr 24 00:00 Flirting With Disaster.mpg
+
+The size of directories corresponds to the number of recordings (not
+counting subdirectories) contained within it. The modification time of
+directories is the start time of the most recent recording contained
+within it.
+
+=head2 Customizing the Directory Listing
+
+You may customize the directory listing by providing a pattern for
+naming each recording using the -p option. For example:
+
+ $ mythfs.pl -p '%C/%T:%S (%od-%ob-%oY)' mythbackend ~/Myth
+
+This will create filenames that look like this:
+
+ Sitcom/The Simpsons:The Food Wife (13-Nov-2011).mpg
+
+Patterns contain a combination of constant strings plus substitution
+patterns consisting of the "%" sign plus 1 to three characters. A
+slash will be interpreted as a directory level: multiple levels are
+allowed. 
+
+Commonly-used substitution patterns are:
+
+    %T   = Title (show name)
+    %S   = Subtitle (episode name)
+    %C   = Category
+    %cn  = Channel: channel number
+    %cN  = Channel: channel name
+    %y   = Recording start time:  year, 2 digits
+    %Y   = Recording start time:  year, 4 digits
+    %m   = Recording start time:  month, leading zero
+    %b   = Recording start time:  abbreviated month name
+    %B   = Recording start time:  full month name
+    %d   = Recording start time:  day of month, leading zero
+    %h   = Recording start time:  12-hour hour, with leading zero
+    %H   = Recording start time:  24-hour hour, with leading zero
+    %i   = Recording start time:  minutes
+    %s   = Recording start time:  seconds
+    %a   = Recording start time:  am/pm
+    %A   = Recording start time:  AM/PM
+
+A full list of patterns can be obtained by running "mythfs.pl -p
+help".
+
+Patterns are largely compatible with the excellent mythlink.pl
+(http://www.mythtv.org/wiki/Mythlink.pl) script, but there are a small
+number of enhancements, such as the ability to generate the month
+name. Also, the patterns that generate the month name without a
+leading zero are not supported.
+
+You may wish to use a delimiter to separate fields of the recording
+name, for example "%T:%S" to generate "Title:Subtitle". Occasionally a
+recording field is empty, leading to names like "The Wild
+Ones:.mpg". To avoid this, pass the --trim option with the delimiter
+you use, and dangling/extra delimiters will be trimmed:
+
+<pre>
+ $ mythfs.pl -p '%T:%S' --trim=':' backend /tmp/myth
+</pre>
+
+If after applying the pattern to a recording the resulting path is not
+unique, then this script will uniqueify the path by appending to it
+the channel number and recording start time, for example:
+
+ Masterpiece Classic/Downtown Abbey_17_1-2013-02-11T02:00.mpg
+ Masterpiece Classic/Downtown Abbey_17_1-2013-03-10T06:00.mpg
+
+=head2 Caching
+
+New and updated recordings will appear in the filesystem after a
+slight delay due to the manner in which the script caches the
+recording list. By default the backend is only checked for updates
+every 10 minutes, but you can adjust this using the --cachetime
+option, which takes the interval in minutes at which the system
+checks for new and updated recordings.
+
+For example, this command will reduce the update interval to 2
+minutes:
+
+  $ mythfs.pl MyHost --cachetime=2 /tmp/mythfs
+
+=head2 Fuse Notes
+
+For best performance, you will need to run this filesystem using a
+version of Perl that supports IThreads. Otherwise it will fall back to
+non-threaded mode, which will introduce occasional delays during
+directory listings and have notably slower performance when reading
+from more than one file simultaneously.
+
+If you are running Perl 5.14 or higher, you *MUST* use at least 0.15
+of the Perl Fuse module. At the time this was written, the version of
+Fuse 0.15 on CPAN was failing its regression tests on many
+platforms. I have found that the easiest way to get a fully
+operational Fuse module is to clone and compile a patched version of
+the source, following this recipe:
+
+ $ git clone git://github.com/isync/perl-fuse.git
+ $ cd perl-fuse
+ $ perl Makefile.PL
+ $ make test   (optional)
+ $ sudo make install
 
 =head1 AUTHOR
 
@@ -17,28 +270,16 @@ License 2.0. See http://www.perlfoundation.org/artistic_license_2_0.
 
 use strict;
 use warnings;
-use threads;
-use threads::shared;
-use Thread::Semaphore;
-use HTTP::Lite;
+use Net::MythTV::Fuse;
 use Getopt::Long qw(:config no_ignore_case);
-use Fuse 'fuse_get_context';
 use File::Spec;
+use Fuse;
 use Config;
-use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
-
-our $VERSION = '1.23';
-use constant CACHE_TIME => 10; # minutes
-use constant MAX_GETS   => 8;  # maximum number of simultaneous file fetches
-use constant MARKER_FILE=> '.fuse-mythfs';
-
-my %Cache    :shared;
-my $ReadSemaphore = Thread::Semaphore->new(MAX_GETS);
-my $Recorded;
+use POSIX 'setsid';
 
 my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,
-    $LocalMount,$NoThreads,$HasIThreads,$Delimiter,
-    $HTTPPort,
+    $LocalMount,$NoThreads,$Delimiter,
+    $HTTPPort,$UnMount,
     $XMLDummyDataPath, # for debugging
     );
 my $Usage = <<END;
@@ -49,6 +290,7 @@ at the directory indicated by mountpoint: e.g. "mythfs.pl myhost
 /tmp/mythfs".
 
 Options:
+   --unmount                     unmount a previously-mounted filesystem
    --cachetime=<time>            cache time for recording names (10 minutes)
    --option=allow_other          allow other accounts to access filesystem (false)
    --option=default_permissions  enable permission checking by kernel (false)
@@ -79,6 +321,10 @@ presented as symbolic links.
 Command line switches can abbreviated to single letters, so you can
 use "-p %T/%S" instead of "--pattern=%T/%S".
 
+If you request unmounting (using --unmount or -u), the first
+non-option argument is interpreted as the mountpoint, not the backend
+hostname.
+
 END
     ;
 GetOptions('option:s'   => \@FuseOptions,
@@ -90,49 +336,54 @@ GetOptions('option:s'   => \@FuseOptions,
 	   'mountpt=s'  => \$LocalMount,
 	   'Port=i'     => \$HTTPPort,
 	   'nothreads'  => \$NoThreads,
+	   'unmount'    => \$UnMount,
 	   'XMLDummy=s' => \$XMLDummyDataPath,  # for debugging
     ) or die $Usage;
 
-$Pattern   ||= "%T/%S";
-list_patterns_and_die() if $Pattern eq 'help';
+list_patterns_and_die() if $Pattern && $Pattern eq 'help';
+$NoThreads  ||= check_disable_threads();
+$Debug        = 1 if defined $Debug && $Debug==0;
+$Debug      ||= 0;
+$HTTPPort   ||= 6544;
+$CacheTime  ||= 5;
+$Pattern    ||= "%T/%S";
 
-$HasIThreads = $Config{useithreads};
-$NoThreads ||= check_disable_threads();
-$CacheTime ||= CACHE_TIME;
-$CacheTime *=  60;  # to seconds
-$Debug      = 1 if defined $Debug && $Debug==0;
-$Debug    ||= 0;
-$HTTPPort ||= 6544;
+if ($UnMount) {
+    my $mountpoint = shift;
+    -e "$mountpoint/.fuse-mythfs" or die "Abort: A MythTV filesystem is not mounted at $mountpoint.\n";
+    exec 'fusermount','-u',$mountpoint;
+}
 
-my $Host       = shift or die $Usage;
+my $host       = shift or die $Usage;
 my $mountpoint = shift or die $Usage;
 $mountpoint    = File::Spec->rel2abs($mountpoint);
 
 my $options  = join(',',@FuseOptions,'ro');
 
 die "Myth filesystem is already mounted on $mountpoint. Use fusermount -u $mountpoint to unmount.\n"
-    if -e "$mountpoint/".MARKER_FILE;
+    if -e "$mountpoint/".Net::MythTV::Fuse->marker_file;
 
 become_daemon() unless $NoDaemon;
-$Recorded = Recorded->new($Pattern,$XMLDummyDataPath);
-start_update_thread();
 
-Fuse::main(mountpoint => $mountpoint,
-	   getdir     => 'main::e_getdir',
-	   getattr    => 'main::e_getattr',
-	   open       => 'main::e_open',
-	   read       => 'main::e_read',
-	   release    => 'main::e_release',
-	   readlink   => 'main::e_readlink',
-	   mountopts  => $options,
-	   debug      => $Debug>1,
-	   threaded   => !$NoThreads,
+my $filesystem = Net::MythTV::Fuse->new(
+    mountpoint      => $mountpoint,
+    backend         => $host,
+    port            => $HTTPPort,
+    debug           => $Debug,
+    threaded        => !$NoThreads,
+    fuse_options    => $options,
+    cachetime       => $CacheTime * 60,
+    delimiter       => $Delimiter,
+    pattern         => $Pattern,
+    localmount      => $LocalMount,
+    dummy_data_path => $XMLDummyDataPath,
     );
+$filesystem->run();
 
 exit 0;
 
 sub check_disable_threads {
-    unless ($HasIThreads) {
+    unless ($Config{useithreads}) {
 	warn "This version of perl is not compiled for ithreads. Running with slower non-threaded version.\n";
 	return 1;
     }
@@ -153,489 +404,11 @@ sub become_daemon {
     fork() && exit 0;
 }
 
-sub start_update_thread {
-    $Recorded->_refresh_recorded or die "Could not contact host $Host at port $HTTPPort";
-    return unless $HasIThreads;
-    my $thr = threads->create(
-	sub {
-	    while (1) {
-		sleep ($CacheTime);
-		$Recorded->_refresh_recorded;
-	    }
-	}
-	);
-    $thr->detach();
-}
-
-sub fixup {
-    my $path = shift;
-    $path =~ s!^/!!;
-    $path;
-}
-
-sub e_open {
-    my $path = fixup(shift);
-    return 0 if $path eq MARKER_FILE;
-
-    my $r = $Recorded->get_recorded;
-    return -ENOENT() unless $r->{paths}{$path} || $r->{directories}{$path};
-    return -EISDIR() if $r->{directories}{$path};
-    return 0;
-}
-
-sub e_release {
-    return 0;
-}
-
-sub e_read {
-    my ($path,$size,$offset) = @_;
-
-    $offset ||= 0;
-
-    $path = fixup($path);
-
-    if ($path eq MARKER_FILE) {
-	my $content = copyright_and_version();
-	return substr($content,$offset,$size);
-    }
-
-    my $r = $Recorded->get_recorded('use_cached');
-    my $e = $r->{paths}{$path} or return -ENOENT();
-    return -EINVAL() if $offset > $e->{length};
-
-    my $basename = $e->{basename};
-    my $host     = $e->{host} || $Host;  # I'm unsure of whether we should use the host in the XML or the designated backend
-    my $sg       = $e->{storage};
-    my $byterange= $offset.'-'.($offset+$size-1);
-
-    my $http = HTTP::Lite->new;
-    $http->add_req_header(Range => $byterange);
-
-    # by placing the request between semaphores, we ensure no more than MAX_GETS 
-    # simultaneous fetches on the backend.
-    $ReadSemaphore->down();
-    my $retcode = $http->request("http://$host:$HTTPPort/Content/GetFile?StorageGroup=$sg&FileName=$basename");
-    $ReadSemaphore->up();
-
-    return -ECONNABORTED() unless $retcode;
-    return -ECONNABORTED() unless $retcode =~ /^2\d\d/;
-    return $http->body;
-}
-
-sub e_getdir {
-    my $path = fixup(shift) || '.';
-
-    my $r = $Recorded->get_recorded;
-    my @entries = keys %{$r->{directories}{$path}};
-    return -ENOENT() unless @entries;
-    unshift @entries,MARKER_FILE if $path eq '.';
-    return ('.','..',@entries,0);
-}
-
-sub e_readlink {
-    my $path = fixup(shift) || '.';
-    my $r = $Recorded->get_recorded;
-    my $e = $r->{paths}{$path} or return -ENOENT();
-    $LocalMount                or return -ENOENT();
-    my $local_path = "$LocalMount/$e->{basename}";
-    return $local_path;
-}
-
-sub e_getattr {
-    my $path = fixup(shift) || '.';
-
-    my $context = fuse_get_context();
-    my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) 
-	= (0,0,0,1,@{$context}{'gid','uid'},1,1024);
-
-    if ($path eq MARKER_FILE) { # special case
-	my $contents = copyright_and_version();
-	return (
-	    $dev,$ino,0100000|0444,$nlink,$uid,$gid,$rdev,
-	    length($contents),time(),time(),time(),$blksize,$blocks);
-    }
-
-    my $r = $Recorded->get_recorded;
-    my $e = $r->{paths}{$path} or return -ENOENT();
-
-    my $isdir  = $e->{type} eq 'directory';
-    my $islink = $e->{type} eq 'file' && $LocalMount && -r "$LocalMount/$e->{basename}";
-
-    my $mode = $isdir ? 0040000|0555 : ($islink ? 0120000|0777 : 0100000|0444);
-
-    my $ctime = $e->{ctime};
-    my $mtime = $e->{mtime};
-    my $atime = $mtime;
-    my $size  = $e->{length};
-
-    return ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,
-	    $size,$atime,$mtime,$ctime,$blksize,$blocks);
-}
-
-sub copyright_and_version {
-    return <<END;
-mythfs.pl version $VERSION. 
-Copyright 2013 Lincoln D. Stein <lincoln.stein\@gmail.com>. 
-Distributed under Perl Artistic License Version 2.
-END
-}
-
 sub list_patterns_and_die {
     while (<DATA>) {
 	print;
     }
     exit -1;
-}
-
-package Recorded;
-use strict;
-use POSIX 'strftime';
-use HTTP::Lite;
-use JSON qw(encode_json decode_json);
-use Date::Parse 'str2time';
-use XML::Simple;
-use Carp 'croak';
-
-use constant Templates => {
-    T  => '{Title}',
-    S  => '{SubTitle}',
-    R  => '{Description}',
-    C  => '{Category}',
-    se => '{Season}',
-    e  => '{Episode}',
-    PI => '{ProgramId}',
-    SI => '{SeriesId}',
-    st => '{Stars}',
-    U  => '{Recording}{RecGroup}',
-    hn => '{HostName}',
-    c  => '{Channel}{ChanId}',
-    cc => '{Channel}{CallSign}',
-    cN => '{Channel}{ChannelName}',
-    cn => '{Channel}{ChanNum}',
-
-    y  => '%y{StartTime}',
-    Y  => '%Y{StartTime}',
-    n  => '%m{StartTime}',  # we don't do the non-leading 0 bit
-    m  => '%m{StartTime}',
-    j  => '%e{StartTime}',
-    d  => '%d{StartTime}',
-    g  => '%I{StartTime}',
-    G  => '%H{StartTime}',
-    h  => '%I{StartTime}',
-    H  => '%H{StartTime}',
-    i  => '%M{StartTime}',
-    s  => '%S{StartTime}',
-    a  => '%P{StartTime}',
-    A  => '%p{StartTime}',
-    b  => '%b{StartTime}',
-    B  => '%B{StartTime}',
-
-    ey  => '%y{EndTime}',
-    eY  => '%Y{EndTime}',
-    en  => '%m{EndTime}',
-    em  => '%m{EndTime}',
-    ej  => '%e{EndTime}',
-    ed  => '%d{EndTime}',
-    eg  => '%I{EndTime}',
-    eG  => '%H{EndTime}',
-    eh  => '%I{EndTime}',
-    eH  => '%H{EndTime}',
-    ei  => '%M{EndTime}',
-    es  => '%S{EndTime}',
-    ea  => '%P{EndTime}',
-    eA  => '%p{EndTime}',
-    eb  => '%b{EndTime}',
-    eB  => '%B{EndTime}',
-
-    # the API doesn't distinguish between program start time and recording start time
-    py  => '%y{StartTime}',
-    pY  => '%Y{StartTime}',
-    pn  => '%m{StartTime}',
-    pm  => '%m{StartTime}',
-    pj  => '%e{StartTime}',
-    pd  => '%d{StartTime}',
-    pg  => '%I{StartTime}',
-    pG  => '%H{StartTime}',
-    ph  => '%I{StartTime}',
-    pH  => '%H{StartTime}',
-    pi  => '%M{StartTime}',
-    ps  => '%S{StartTime}',
-    pa  => '%P{StartTime}',
-    pA  => '%p{StartTime}',
-    pb  => '%b{StartTime}',
-    pB  => '%B{StartTime}',
-
-    pey  => '%y{EndTime}',
-    peY  => '%Y{EndTime}',
-    pen  => '%m{EndTime}',
-    pem  => '%m{EndTime}',
-    pej  => '%e{EndTime}',
-    ped  => '%d{EndTime}',
-    peg  => '%I{EndTime}',
-    peG  => '%H{EndTime}',
-    peh  => '%I{EndTime}',
-    peH  => '%H{EndTime}',
-    pei  => '%M{EndTime}',
-    pes  => '%S{EndTime}',
-    pea  => '%P{EndTime}',
-    peA  => '%p{EndTime}',
-    peb  => '%b{EndTime}',
-    peB  => '%B{EndTime}',
-
-    oy   => '%y{Airdate}',
-    oY   => '%Y{Airdate}',
-    on   => '%m{Airdate}', # we don't do the non-leading 0 bit
-    om   => '%m{Airdate}',
-    oj   => '%e{Airdate}',
-    od   => '%d{Airdate}',
-    ob   => '%b{Airdate}',
-    oB   => '%B{Airdate}',
-
-    '%'  => '%',
-    };
-
-sub new {
-    my $class   = shift;
-    my $pattern = shift;
-
-    my $self =  bless {
-	pattern => $pattern,
-	cache   => undef,
-	mtime   => 0,
-    },ref $class || $class;
-
-    # for debugging, we allow caller to pass the path to a file containing
-    # the XML data
-    if (my $dummy_data_path = shift) {
-	open my $fh,$dummy_data_path or croak "$dummy_data_path: $!";
-	local $/;
-	my $dummy_data = <$fh>;
-	$self->_dummy_data($dummy_data) if $dummy_data;
-    }
-
-    return $self;
-}
-
-sub _dummy_data {
-    my $self = shift;
-    $self->{dummy_data} = shift if @_;
-    return $self->{dummy_data};
-}
-
-sub cache {
-    my $self = shift;
-    $self->{cache} = shift if @_;
-    return $self->{cache};
-}
-
-sub mtime {
-    my $self = shift;
-    $self->{mtime} = shift if @_;
-    return $self->{mtime};
-}
-
-sub get_recorded {
-    my $self = shift;
-    my $nocache = shift;
-    
-    my $cache = $self->cache;
-
-    return $cache if $cache && $nocache;
-
-    $Recorded->_refresh_recorded if !$HasIThreads && (time() - $Cache{mtime} >= $CacheTime);
-    return $cache if $cache && $self->mtime >= $Cache{mtime};
-
-    warn scalar localtime()," refreshing thread-level cache, mtime = $Cache{mtime}\n" if $Debug;
-    lock %Cache;
-    $self->mtime($Cache{mtime});
-    return $self->cache(decode_json($Cache{recorded}||''));
-}
-
-sub recording2path {
-    my $self = shift;
-    my $recording = shift;
-    my $path     = $self->apply_pattern($recording);
-    my @components = split '/',$path;
-
-    # trimming operation
-    if ($Delimiter) {
-	foreach (@components) {
-	    s/${Delimiter}{2,}/$Delimiter/g;
-	    s/${Delimiter}(\s+)/$1/g;
-	    s/$Delimiter$//;
-	}
-    }
-
-    return grep {length} @components;
-}
-
-sub apply_pattern {
-    my $self = shift;
-    my $recording = shift;
-    no warnings;
-
-    my $pat_sub   = $self->_compile_pattern_sub();
-    my $template  = $self->{pattern};
-
-    my $Templates = Templates();
-    my @codes     = sort {length($b)<=>length($a)} keys %$Templates;
-    my $match     = join('|',@codes);
-
-    $template =~ s/%($match)/$pat_sub->($recording,$1)/eg;
-    return $template;
-}
-
-sub _compile_pattern_sub {
-    my $self = shift;
-    return $self->{pattern_sub} if $self->{pattern_sub};
-
-    my $template = $self->{pattern};
-    my $Templates= Templates();
-
-    my $sub = "sub {\n";
-    $sub   .= "my (\$recording,\$code) = \@_;\n";
-
-    while ($template =~ /%([a-zA-Z%]{1,3})/g) {
-	my $code = $1;
-	my $field = $Templates->{$code} or next;
-	if ($field eq '%') {
-	    $sub .= "return '%' if \$code eq '$code';\n";
-	    next;
-	}
-	if ($field =~ /(%\w+)(\{\w+\})/) { #datetime specifier
-	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2)||0)) if \$code eq '$code';\n";
-	    next;
-	}
-	$sub .= <<END;
-if (\$code eq '$code') {
-    my \$val = \$recording->$field || '';
-    \$val =~ tr!a-zA-Z0-9_.,&\@:* ^\\![]{}(),?#\$=+%-!_!c;
-    return \$val;
-}
-END
-    ;
-    }
-    $sub .= "}\n";
-    my $s = eval $sub;
-    die $@ if $@;
-    return $self->{pattern_sub} = $s;
-}
-
-sub _refresh_recorded {
-    my $self = shift;
-
-    print  STDERR scalar(localtime())," Refreshing recording list..." if $Debug;
-
-    lock %Cache;
-    my $var    = {};
-    my $parser = XML::Simple->new(SuppressEmpty=>1);
-    my $data = $self->_fetch_recorded_data() or return;
-    my $rec = $parser->XMLin($data);
-    $self->_build_directory_map($rec,$var);
-    $Cache{recorded} = encode_json($var);
-    $Cache{mtime}    = time();
-    print STDERR "mtime set to $Cache{mtime}\n" if $Debug;
-
-    return 1;
-}
-
-sub _fetch_recorded_data {
-    my $self = shift;
-
-    return $self->_dummy_data if $self->_dummy_data;
-
-    my $http     = HTTP::Lite->new;
-    my $retcode  = $http->request("http://$Host:$HTTPPort/Dvr/GetRecordedList");
-    unless ($retcode && $retcode =~ /^2\d\d/) {
-	warn "request failed with $retcode ",$http->status_message;
-	return;
-    }
-
-    return $http->body;
-}
-
-sub _build_directory_map {
-    my $self = shift;
-    my ($rec,$map) = @_;
-
-    my $count = 0;
-    my (%recordings,%paths);
-    for my $r (@{$rec->{Programs}{Program}}) {
-	$count++;
-
-	my $sg = $r->{Recording}{StorageGroup};
-	next if $sg eq 'LiveTV';
-
- 	my (@path)              = $self->recording2path($r);
-	my $key                 = join('-',$r->{HostName},$r->{FileName});  # we use this as our unique ID
-	my $path                = join('/',@path);
-	$recordings{$key}{path}{$path}++;
-	$recordings{$key}{meta} = $r;
-	$paths{$path}{$key}++;
-    }
-    
-    # paths that need fixing to be unique
-    for my $path (keys %paths) {
-	my @keys = keys %{$paths{$path}};
-	next unless @keys > 1;
-
-	my $count = 0;
-	for my $key (@keys) {
-            my $start = $recordings{$key}{meta}{StartTime};
-	    $start =~ s/:\d+Z$//;
-            
-	    my $fixed_path = sprintf("%s_%s-%s",$path,$recordings{$key}{meta}{Channel}{ChanNum},$start);
-	    delete $recordings{$key}{path};
-	    $recordings{$key}{path}{$fixed_path}++;
-	}
-    }
-
-    # at this point, we actually build the map that is passed to FUSE
-    for my $key (keys %recordings) {
-
-	my ($path) = keys %{$recordings{$key}{path}}; # should only be one unique path at this point
-
-	# take care of the extension
-	my $meta     = $recordings{$key}{meta};
-	my ($suffix) = $meta->{FileName}    =~ /\.(\w+)$/;
-	$path       .= ".$suffix" unless $path =~ /\.$suffix$/;
-
-	my @path = split('/',$path);
-	my $filename = pop @path;
-	unshift @path,'.';
-
-	my $ctime = str2time($meta->{StartTime});
-	my $mtime = str2time($meta->{LastModified});
-	
-	$map->{paths}{$path}{type}     = 'file';
-	$map->{paths}{$path}{host}     = $meta->{HostName};
-	$map->{paths}{$path}{length}   = $meta->{FileSize};
-	$map->{paths}{$path}{basename} = $meta->{FileName};
-	$map->{paths}{$path}{storage}  = $meta->{Recording}{StorageGroup};
-	$map->{paths}{$path}{ctime}    = $ctime;
-	$map->{paths}{$path}{mtime}    = $mtime;
-	
-	# take care of the directories
-	my $dir = '';
-	while (my $p = shift @path) {
-	    $dir .= length $dir ? "/$p" : $p;
-	    $dir =~ s!^\./!!;
-
-	    $map->{paths}{$dir}{type}     = 'directory';
-	    $map->{paths}{$dir}{length}++;
-	    $map->{paths}{$dir}{ctime}    = $ctime if ($map->{paths}{$p}{ctime}||0) < $ctime;
-	    $map->{paths}{$dir}{mtime}    = $mtime if ($map->{paths}{$p}{mtime}||0) < $mtime;
-
-	    # subdirectory entry
-	    if (defined $path[0]) {
-		$map->{directories}{$dir}{$path[0]}++;
-	    }
-	}
-	$map->{directories}{$dir}{$filename}++;
-    }
-
-    print STDERR scalar keys %recordings," recordings retrieved..." if $Debug;
-    return $map;
 }
 
 __END__

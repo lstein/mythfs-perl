@@ -1,3 +1,6 @@
+1.30 Fri May 10 00:37:52 EDT 2013
+     * Modularized the script into a series of libraries.
+
 1.23 Thu May  9 15:26:28 EDT 2013
      * Replace WWW::Curl with HTTP::Lite due to thread-related crashes in Curl library.     
 

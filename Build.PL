@@ -7,7 +7,7 @@ use Module::Build;
 my $build = Module::Build->new(
     module_name       => 'Mythfs-perl',
     license           => 'perl',
-    dist_version_from => 'bin/mythfs.pl',
+    dist_version_from => 'lib/Net/MythTV/Fuse.pm',
     dist_abstract     => 'Mount MythTV recordings as a file system',
     dist_author       => 'Lincoln Stein <lincoln.stein@oicr.on.ca>',
     configure_requires => { 'Module::Build' => 0 },
