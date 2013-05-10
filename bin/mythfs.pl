@@ -1,66 +1,108 @@
 #!/usr/bin/perl
+ 
+=head1 NAME
+
+mythfs.pl - Mount Mythtv recordings using FUSE
+
+=head1 AUTHOR
+
+Copyright 2013, Lincoln D. Stein <lincoln.stein@gmail.com>
+
+=head1 LICENSE
+
+This package is distributed under the terms of the Perl Artistic
+License 2.0. See http://www.perlfoundation.org/artistic_license_2_0.
+
+=cut
 
 use strict;
 use warnings;
 use threads;
 use threads::shared;
 use Thread::Semaphore;
-use Getopt::Long;
+use HTTP::Lite;
+use Getopt::Long qw(:config no_ignore_case);
 use Fuse 'fuse_get_context';
 use File::Spec;
-use WWW::Curl::Easy;
 use Config;
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED setsid);
 
-our $VERSION = '1.00';
-use constant CACHE_TIME => 60*10;
-use constant MAX_GETS   => 8;
+our $VERSION = '1.23';
+use constant CACHE_TIME => 10; # minutes
+use constant MAX_GETS   => 8;  # maximum number of simultaneous file fetches
+use constant MARKER_FILE=> '.fuse-mythfs';
 
 my %Cache    :shared;
 my $ReadSemaphore = Thread::Semaphore->new(MAX_GETS);
 my $Recorded;
 
-my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,$NoThreads);
+my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,
+    $LocalMount,$NoThreads,$HasIThreads,$Delimiter,
+    $HTTPPort,
+    $XMLDummyDataPath, # for debugging
+    );
 my $Usage = <<END;
-Usage: $0 <Myth Master Host> <mountpoint>
+Usage: $0 <Myth backend Host> <mountpoint>
+
+Fuse filesystem to mount recordings from Myth backend running on Host
+at the directory indicated by mountpoint: e.g. "mythfs.pl myhost
+/tmp/mythfs".
 
 Options:
-   -c <time>               cache time for recording names (minutes)
-   -o allow_other          allow other accounts to access filesystem
-   -o default_permissions  enable permission checking by kernel
-   -o fsname=name          set filesystem name
-   -o use_ino              let filesystem set inode numbers
-   -o nonempty             allow mounts over non-empty file/dir
-   -p <patterns>           filename pattern default ("%T/%S")
-   -f                      remain in foreground
-   -d                      trace FUSE operations
-   -nothreads              disable threads
+   --cachetime=<time>            cache time for recording names (10 minutes)
+   --option=allow_other          allow other accounts to access filesystem (false)
+   --option=default_permissions  enable permission checking by kernel (false)
+   --option=fsname=name          set filesystem name (none)
+   --option=use_ino              let filesystem set inode numbers (false)
+   --option=nonempty             allow mounts over non-empty file/dir (false)
+   --pattern=<patterns>          filename pattern default ("%T/%S")
+   --mountpt=<path>              mountpoint/directory for locally stored recordings (no default)
+   --trim=<char>                 trim redundant occurrences of this character (no default)
+   --Port=<port>                 HTTP request port on backend (6544)
+   --foreground                  remain in foreground (false)
+   --debug=<1,2>                 enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
+   --nothreads                   disable threads (false)
 
 Filename patterns consist of regular characters and substitution
 patterns beginning with a %. Slashes (\/) will delimit directories and
 subdirectories. Empty directory names will be collapsed. The default
 is "%T/%S", the recording title followed by the subtitle.  Run this
 command with "-p help" to get a list of all the substitution patterns
-recognized.  
+recognized.
+
+By default, files will be streamed as needed from the myth
+backend. However, if the recording files are accessible directly from
+the filesystem (e.g. via an NFS mount), you can provide the path to
+this directory using the --mountpt option. The filenames will then be
+presented as symbolic links.
+
+Command line switches can abbreviated to single letters, so you can
+use "-p %T/%S" instead of "--pattern=%T/%S".
+
 END
     ;
-
 GetOptions('option:s'   => \@FuseOptions,
 	   'cachetime=i'=> \$CacheTime,
 	   'foreground' => \$NoDaemon,
 	   'pattern=s'  => \$Pattern,
-	   'debug'      => \$Debug,
+	   'debug:i'    => \$Debug,
+	   'trim=s'     => \$Delimiter,
+	   'mountpt=s'  => \$LocalMount,
+	   'Port=i'     => \$HTTPPort,
 	   'nothreads'  => \$NoThreads,
+	   'XMLDummy=s' => \$XMLDummyDataPath,  # for debugging
     ) or die $Usage;
 
 $Pattern   ||= "%T/%S";
 list_patterns_and_die() if $Pattern eq 'help';
-unless ($NoThreads || $Config{useithreads}) {
-    warn "This perl not compiled for ithreads. Threading support disabled.\n";
-    warn "Filesystem will not be automatically updated to show new && deleted recordings.\n";
-    $NoThreads++;
-}
+
+$HasIThreads = $Config{useithreads};
+$NoThreads ||= check_disable_threads();
 $CacheTime ||= CACHE_TIME;
+$CacheTime *=  60;  # to seconds
+$Debug      = 1 if defined $Debug && $Debug==0;
+$Debug    ||= 0;
+$HTTPPort ||= 6544;
 
 my $Host       = shift or die $Usage;
 my $mountpoint = shift or die $Usage;
@@ -68,9 +110,11 @@ $mountpoint    = File::Spec->rel2abs($mountpoint);
 
 my $options  = join(',',@FuseOptions,'ro');
 
-$Recorded = Recorded->new($Pattern);
+die "Myth filesystem is already mounted on $mountpoint. Use fusermount -u $mountpoint to unmount.\n"
+    if -e "$mountpoint/".MARKER_FILE;
 
 become_daemon() unless $NoDaemon;
+$Recorded = Recorded->new($Pattern,$XMLDummyDataPath);
 start_update_thread();
 
 Fuse::main(mountpoint => $mountpoint,
@@ -79,12 +123,27 @@ Fuse::main(mountpoint => $mountpoint,
 	   open       => 'main::e_open',
 	   read       => 'main::e_read',
 	   release    => 'main::e_release',
+	   readlink   => 'main::e_readlink',
 	   mountopts  => $options,
-	   debug      => $Debug||0,
+	   debug      => $Debug>1,
 	   threaded   => !$NoThreads,
     );
 
 exit 0;
+
+sub check_disable_threads {
+    unless ($HasIThreads) {
+	warn "This version of perl is not compiled for ithreads. Running with slower non-threaded version.\n";
+	return 1;
+    }
+    if ($] >= 5.014 && $Fuse::VERSION < 0.15) {
+	warn "You need Fuse version 0.15 or higher to run under this version of Perl.\n";
+	warn "Threads will be disabled. Running with slower non-threaded version.\n";
+	return 1;
+    }
+
+    return 0;
+}
 
 sub become_daemon {
     fork() && exit 0;
@@ -95,12 +154,12 @@ sub become_daemon {
 }
 
 sub start_update_thread {
-    $Recorded->_refresh_recorded;
+    $Recorded->_refresh_recorded or die "Could not contact host $Host at port $HTTPPort";
+    return unless $HasIThreads;
     my $thr = threads->create(
 	sub {
 	    while (1) {
 		sleep ($CacheTime);
-		print  STDERR scalar(localtime())," Update_thread..." if $Debug;
 		$Recorded->_refresh_recorded;
 	    }
 	}
@@ -116,6 +175,8 @@ sub fixup {
 
 sub e_open {
     my $path = fixup(shift);
+    return 0 if $path eq MARKER_FILE;
+
     my $r = $Recorded->get_recorded;
     return -ENOENT() unless $r->{paths}{$path} || $r->{directories}{$path};
     return -EISDIR() if $r->{directories}{$path};
@@ -132,25 +193,33 @@ sub e_read {
     $offset ||= 0;
 
     $path = fixup($path);
-    my $r = $Recorded->get_recorded('use_cached');
-    return -ENOENT() unless $r->{paths}{$path};
-    return -EINVAL() if $offset > $r->{paths}{$path}{length};
 
-    my $basename = $r->{paths}{$path}{basename};
-    my $sg       = $r->{paths}{$path}{storage};
+    if ($path eq MARKER_FILE) {
+	my $content = copyright_and_version();
+	return substr($content,$offset,$size);
+    }
+
+    my $r = $Recorded->get_recorded('use_cached');
+    my $e = $r->{paths}{$path} or return -ENOENT();
+    return -EINVAL() if $offset > $e->{length};
+
+    my $basename = $e->{basename};
+    my $host     = $e->{host} || $Host;  # I'm unsure of whether we should use the host in the XML or the designated backend
+    my $sg       = $e->{storage};
     my $byterange= $offset.'-'.($offset+$size-1);
 
+    my $http = HTTP::Lite->new;
+    $http->add_req_header(Range => $byterange);
+
+    # by placing the request between semaphores, we ensure no more than MAX_GETS 
+    # simultaneous fetches on the backend.
     $ReadSemaphore->down();
-    my $content;
-    my $curl = WWW::Curl::Easy->new;
-    $curl->setopt(CURLOPT_URL,"http://$Host:6544/Content/GetFile?StorageGroup=$sg&FileName=$basename");
-    $curl->setopt(CURLOPT_HTTPHEADER,["Range: $byterange"]);
-    $curl->setopt(CURLOPT_WRITEDATA,\$content);
-    my $retcode = $curl->perform;
+    my $retcode = $http->request("http://$host:$HTTPPort/Content/GetFile?StorageGroup=$sg&FileName=$basename");
     $ReadSemaphore->up();
-    return -ECONNABORTED() unless $retcode==0;
-    return -ECONNABORTED() unless $curl->getinfo(CURLINFO_RESPONSE_CODE) =~ /^2\d\d/;
-    return $content;
+
+    return -ECONNABORTED() unless $retcode;
+    return -ECONNABORTED() unless $retcode =~ /^2\d\d/;
+    return $http->body;
 }
 
 sub e_getdir {
@@ -159,7 +228,17 @@ sub e_getdir {
     my $r = $Recorded->get_recorded;
     my @entries = keys %{$r->{directories}{$path}};
     return -ENOENT() unless @entries;
+    unshift @entries,MARKER_FILE if $path eq '.';
     return ('.','..',@entries,0);
+}
+
+sub e_readlink {
+    my $path = fixup(shift) || '.';
+    my $r = $Recorded->get_recorded;
+    my $e = $r->{paths}{$path} or return -ENOENT();
+    $LocalMount                or return -ENOENT();
+    my $local_path = "$LocalMount/$e->{basename}";
+    return $local_path;
 }
 
 sub e_getattr {
@@ -169,12 +248,20 @@ sub e_getattr {
     my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) 
 	= (0,0,0,1,@{$context}{'gid','uid'},1,1024);
 
+    if ($path eq MARKER_FILE) { # special case
+	my $contents = copyright_and_version();
+	return (
+	    $dev,$ino,0100000|0444,$nlink,$uid,$gid,$rdev,
+	    length($contents),time(),time(),time(),$blksize,$blocks);
+    }
+
     my $r = $Recorded->get_recorded;
     my $e = $r->{paths}{$path} or return -ENOENT();
 
-    my $isdir = $e->{type} eq 'directory';
+    my $isdir  = $e->{type} eq 'directory';
+    my $islink = $e->{type} eq 'file' && $LocalMount && -r "$LocalMount/$e->{basename}";
 
-    my $mode = $isdir ? 0040000|0555 : 0100000|0444;
+    my $mode = $isdir ? 0040000|0555 : ($islink ? 0120000|0777 : 0100000|0444);
 
     my $ctime = $e->{ctime};
     my $mtime = $e->{mtime};
@@ -183,6 +270,14 @@ sub e_getattr {
 
     return ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,
 	    $size,$atime,$mtime,$ctime,$blksize,$blocks);
+}
+
+sub copyright_and_version {
+    return <<END;
+mythfs.pl version $VERSION. 
+Copyright 2013 Lincoln D. Stein <lincoln.stein\@gmail.com>. 
+Distributed under Perl Artistic License Version 2.
+END
 }
 
 sub list_patterns_and_die {
@@ -195,10 +290,11 @@ sub list_patterns_and_die {
 package Recorded;
 use strict;
 use POSIX 'strftime';
+use HTTP::Lite;
 use JSON qw(encode_json decode_json);
-use WWW::Curl::Easy;
 use Date::Parse 'str2time';
 use XML::Simple;
+use Carp 'croak';
 
 use constant Templates => {
     T  => '{Title}',
@@ -231,6 +327,8 @@ use constant Templates => {
     s  => '%S{StartTime}',
     a  => '%P{StartTime}',
     A  => '%p{StartTime}',
+    b  => '%b{StartTime}',
+    B  => '%B{StartTime}',
 
     ey  => '%y{EndTime}',
     eY  => '%Y{EndTime}',
@@ -246,6 +344,8 @@ use constant Templates => {
     es  => '%S{EndTime}',
     ea  => '%P{EndTime}',
     eA  => '%p{EndTime}',
+    eb  => '%b{EndTime}',
+    eB  => '%B{EndTime}',
 
     # the API doesn't distinguish between program start time and recording start time
     py  => '%y{StartTime}',
@@ -262,6 +362,8 @@ use constant Templates => {
     ps  => '%S{StartTime}',
     pa  => '%P{StartTime}',
     pA  => '%p{StartTime}',
+    pb  => '%b{StartTime}',
+    pB  => '%B{StartTime}',
 
     pey  => '%y{EndTime}',
     peY  => '%Y{EndTime}',
@@ -277,6 +379,8 @@ use constant Templates => {
     pes  => '%S{EndTime}',
     pea  => '%P{EndTime}',
     peA  => '%p{EndTime}',
+    peb  => '%b{EndTime}',
+    peB  => '%B{EndTime}',
 
     oy   => '%y{Airdate}',
     oY   => '%Y{Airdate}',
@@ -284,21 +388,38 @@ use constant Templates => {
     om   => '%m{Airdate}',
     oj   => '%e{Airdate}',
     od   => '%d{Airdate}',
+    ob   => '%b{Airdate}',
+    oB   => '%B{Airdate}',
 
     '%'  => '%',
     };
 
-# cache entries for 10 minutes
-# this means that new recordings won't show up in the file system for up to this long
 sub new {
-    my $class = shift;
+    my $class   = shift;
     my $pattern = shift;
 
-    return bless {
+    my $self =  bless {
 	pattern => $pattern,
 	cache   => undef,
 	mtime   => 0,
     },ref $class || $class;
+
+    # for debugging, we allow caller to pass the path to a file containing
+    # the XML data
+    if (my $dummy_data_path = shift) {
+	open my $fh,$dummy_data_path or croak "$dummy_data_path: $!";
+	local $/;
+	my $dummy_data = <$fh>;
+	$self->_dummy_data($dummy_data) if $dummy_data;
+    }
+
+    return $self;
+}
+
+sub _dummy_data {
+    my $self = shift;
+    $self->{dummy_data} = shift if @_;
+    return $self->{dummy_data};
 }
 
 sub cache {
@@ -316,13 +437,15 @@ sub mtime {
 sub get_recorded {
     my $self = shift;
     my $nocache = shift;
-
+    
     my $cache = $self->cache;
 
     return $cache if $cache && $nocache;
+
+    $Recorded->_refresh_recorded if !$HasIThreads && (time() - $Cache{mtime} >= $CacheTime);
     return $cache if $cache && $self->mtime >= $Cache{mtime};
 
-    warn "refreshing cache from Cache, mtime = $Cache{mtime}" if $Debug;
+    warn scalar localtime()," refreshing thread-level cache, mtime = $Cache{mtime}\n" if $Debug;
     lock %Cache;
     $self->mtime($Cache{mtime});
     return $self->cache(decode_json($Cache{recorded}||''));
@@ -333,6 +456,16 @@ sub recording2path {
     my $recording = shift;
     my $path     = $self->apply_pattern($recording);
     my @components = split '/',$path;
+
+    # trimming operation
+    if ($Delimiter) {
+	foreach (@components) {
+	    s/${Delimiter}{2,}/$Delimiter/g;
+	    s/${Delimiter}(\s+)/$1/g;
+	    s/$Delimiter$//;
+	}
+    }
+
     return grep {length} @components;
 }
 
@@ -370,7 +503,7 @@ sub _compile_pattern_sub {
 	    next;
 	}
 	if ($field =~ /(%\w+)(\{\w+\})/) { #datetime specifier
-	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2))) if \$code eq '$code';\n";
+	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2)||0)) if \$code eq '$code';\n";
 	    next;
 	}
 	$sub .= <<END;
@@ -391,29 +524,34 @@ END
 sub _refresh_recorded {
     my $self = shift;
 
-    lock %Cache;
+    print  STDERR scalar(localtime())," Refreshing recording list..." if $Debug;
 
-    local $SIG{CHLD} = 'IGNORE';
+    lock %Cache;
     my $var    = {};
     my $parser = XML::Simple->new(SuppressEmpty=>1);
-
-    my $data;
-    my $curl = WWW::Curl::Easy->new;
-    $curl->setopt(CURLOPT_URL,"http://$Host:6544/Dvr/GetRecordedList");
-    $curl->setopt(CURLOPT_WRITEDATA,\$data);
-    if ((my $retcode = $curl->perform) != 0) {
-	warn "failed with ",$curl->strerror($retcode),' ',$curl->errbuf;
-	return;
-    } elsif ((my $response = $curl->getinfo(CURLINFO_RESPONSE_CODE)) !~ /^2\d\d/) {
-	warn "failed with response code: $response";
-	return;
-    }
-    
+    my $data = $self->_fetch_recorded_data() or return;
     my $rec = $parser->XMLin($data);
     $self->_build_directory_map($rec,$var);
     $Cache{recorded} = encode_json($var);
     $Cache{mtime}    = time();
-    print STDERR "_refresh_recorded(), set mtime to $Cache{mtime}" if $Debug;
+    print STDERR "mtime set to $Cache{mtime}\n" if $Debug;
+
+    return 1;
+}
+
+sub _fetch_recorded_data {
+    my $self = shift;
+
+    return $self->_dummy_data if $self->_dummy_data;
+
+    my $http     = HTTP::Lite->new;
+    my $retcode  = $http->request("http://$Host:$HTTPPort/Dvr/GetRecordedList");
+    unless ($retcode && $retcode =~ /^2\d\d/) {
+	warn "request failed with $retcode ",$http->status_message;
+	return;
+    }
+
+    return $http->body;
 }
 
 sub _build_directory_map {
@@ -444,9 +582,9 @@ sub _build_directory_map {
 	my $count = 0;
 	for my $key (@keys) {
             my $start = $recordings{$key}{meta}{StartTime};
-	    $start =~ s/\d+Z$//;
+	    $start =~ s/:\d+Z$//;
             
-	    my $fixed_path = sprintf("%s_%s",$path,$start);
+	    my $fixed_path = sprintf("%s_%s-%s",$path,$recordings{$key}{meta}{Channel}{ChanNum},$start);
 	    delete $recordings{$key}{path};
 	    $recordings{$key}{path}{$fixed_path}++;
 	}
@@ -470,6 +608,7 @@ sub _build_directory_map {
 	my $mtime = str2time($meta->{LastModified});
 	
 	$map->{paths}{$path}{type}     = 'file';
+	$map->{paths}{$path}{host}     = $meta->{HostName};
 	$map->{paths}{$path}{length}   = $meta->{FileSize};
 	$map->{paths}{$path}{basename} = $meta->{FileName};
 	$map->{paths}{$path}{storage}  = $meta->{Recording}{StorageGroup};
@@ -495,7 +634,7 @@ sub _build_directory_map {
 	$map->{directories}{$dir}{$filename}++;
     }
 
-    print STDERR scalar keys %recordings," recordings retrieved\n" if $Debug;
+    print STDERR scalar keys %recordings," recordings retrieved..." if $Debug;
     return $map;
 }
 
@@ -518,6 +657,8 @@ The following substitution patterns can be used in recording paths.
     %y   = Recording start time:  year, 2 digits
     %Y   = Recording start time:  year, 4 digits
     %m   = Recording start time:  month, leading zero
+    %b   = Recording start time:  abbreviated month name
+    %B   = Recording start time:  full month name
     %d   = Recording start time:  day of month, leading zero
     %h   = Recording start time:  12-hour hour, with leading zero
     %H   = Recording start time:  24-hour hour, with leading zero
@@ -528,6 +669,8 @@ The following substitution patterns can be used in recording paths.
     %ey  = Recording end time:  year, 2 digits
     %eY  = Recording end time:  year, 4 digits
     %em  = Recording end time:  month, leading zero
+    %eb  = Recording end time:  abbreviated month name
+    %eB  = Recording end time:  full month name
     %ej  = Recording end time:  day of month
     %ed  = Recording end time:  day of month, leading zero
     %eh  = Recording end time:  12-hour hour, with leading zero
@@ -539,6 +682,8 @@ The following substitution patterns can be used in recording paths.
     %py  = Program start time:  year, 2 digits
     %pY  = Program start time:  year, 4 digits
     %pm  = Program start time:  month, leading zero
+    %pb  = Program start time:  abbreviated month name
+    %pB  = Program start time:  full month name
     %pj  = Program start time:  day of month
     %pd  = Program start time:  day of month, leading zero
     %ph  = Program start time:  12-hour hour, with leading zero
@@ -550,6 +695,8 @@ The following substitution patterns can be used in recording paths.
     %pey = Program end time:  year, 2 digits
     %peY = Program end time:  year, 4 digits
     %pem = Program end time:  month, leading zero
+    %peb = Program end time:  abbreviated month name
+    %peB = Program end time:  full month name
     %pej = Program end time:  day of month
     %ped = Program end time:  day of month, leading zero
     %peh = Program end time:  12-hour hour, with leading zero
@@ -561,7 +708,8 @@ The following substitution patterns can be used in recording paths.
     %oy  = Original Airdate:  year, 2 digits
     %oY  = Original Airdate:  year, 4 digits
     %om  = Original Airdate:  month, leading zero
+    %ob  = Original Airdate:  abbreviated month name
+    %oB  = Original Airdate:  full month name
     %oj  = Original Airdate:  day of month
     %od  = Original Airdate:  day of month, leading zero
     %%   = a literal % character
- 
