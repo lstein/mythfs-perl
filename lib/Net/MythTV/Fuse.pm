@@ -36,7 +36,7 @@ use Carp 'croak';
 
 use constant MARKER_FILE=> '.fuse-mythfs';
 
-our $VERSION = 1.30;
+our $VERSION = '1.30';
 
 my $Package = __PACKAGE__;
 my $Recorded;
