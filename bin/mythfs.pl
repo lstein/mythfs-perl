@@ -198,6 +198,8 @@ Commonly-used substitution patterns are:
     %T   = Title (show name)
     %S   = Subtitle (episode name)
     %C   = Category
+    %TC  = If part of a series, then Title, else Category
+    %ST  = If part of a series, then SubTitle, else Title
     %cn  = Channel: channel number
     %cN  = Channel: channel name
     %y   = Recording start time:  year, 2 digits
@@ -400,6 +402,8 @@ The following substitution patterns can be used in recording paths.
     %R   = Description
     %C   = Category
     %U   = RecGroup
+    %TC  = If part of a series, then Title, else Category
+    %ST  = If part of a series, then SubTitle, else Title
     %hn  = Hostname of the machine where the file resides
     %PI  = Program ID
     %SI  = Series ID

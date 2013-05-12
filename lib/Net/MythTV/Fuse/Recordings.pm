@@ -57,6 +57,8 @@ use constant Templates => {
     S  => '{SubTitle}',
     R  => '{Description}',
     C  => '{Category}',
+    ST => '{SubTitle}?{SubTitle}:{Title}',   # prefer %S?%S:%T
+    TC => '{SubTitle}?{Title}:{Category}',   # prefer %S?%T:%C
     se => '{Season}',
     e  => '{Episode}',
     PI => '{ProgramId}',
@@ -564,12 +566,24 @@ sub _compile_pattern_sub {
 	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2)||0)) if \$code eq '$code';\n";
 	    next;
 	}
+	if ($field =~ /(.+)\?(.+)\:(.+)/) {  # something like '{SubTitle}?{SubTitle}:{Title}'
+	    $sub .= <<END;
+	    if (\$code eq '$code') {
+		my \$val = \$recording->$1?\$recording->$2:\$recording->$3;
+		\$val  ||= '';
+		\$val =~ tr!a-zA-Z0-9_.,&\@:* ^\\![]{}(),?#\$=+%-!_!c;
+		return \$val;
+	    }
+END
+    next;
+	}
+
 	$sub .= <<END;
-if (\$code eq '$code') {
-    my \$val = \$recording->$field || '';
-    \$val =~ tr!a-zA-Z0-9_.,&\@:* ^\\![]{}(),?#\$=+%-!_!c;
-    return \$val;
-}
+	if (\$code eq '$code') {
+	    my \$val = \$recording->$field || '';
+	    \$val =~ tr!a-zA-Z0-9_.,&\@:* ^\\![]{}(),?#\$=+%-!_!c;
+	    return \$val;
+	}
 END
     ;
     }
