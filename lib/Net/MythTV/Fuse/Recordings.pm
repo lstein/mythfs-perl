@@ -204,6 +204,29 @@ sub new {
     return $self;
 }
 
+=head2 Accessors
+
+These methods get or set the correspondingly-named values:
+
+ debug()
+ backend()
+ port()
+ maxgets()
+ threaded()
+ pattern()
+ delimiter()
+ mtime()
+ localmount()
+
+These methods are used internally:
+
+ dummy_data()
+ cache()
+ cachetime()
+ semaphore()
+
+=cut
+
 =head2 $r->start_update_thread
 
 Start the thread that periodically fetches and caches the recording
@@ -354,6 +377,27 @@ sub recording2path {
     return grep {length} @components;
 }
 
+
+
+=head2 $message = $r->status
+
+Returns the last status message.
+
+=cut
+
+sub status {
+    my $self  = shift;
+    my $r     = $self->get_recorded;
+    my $mtime = localtime($self->mtime);
+    return "$mtime: $r->{status}\n";
+}
+
+=head2 $time = $r->mtime
+
+Return the time that the status was last updated.
+
+=cut
+
 =head2 @entries = $r->entries($path)
 
 Given a path to a directory in the virtual filesystem, return all
@@ -466,6 +510,7 @@ sub download_recorded_file {
     my $byterange= $offset.'-'.($offset+$size-1);
 
     my $http = HTTP::Lite->new;
+    $http->http11_mode(1);
     $http->add_req_header(Range => $byterange);
 
     # by placing the request between semaphores, we ensure no more than maxgetws
@@ -551,9 +596,18 @@ sub _refresh_recorded {
     lock %Cache;
     my $var    = {};
     my $parser = XML::Simple->new(SuppressEmpty=>1);
-    my $data = $self->_fetch_recorded_data() or return;
-    my $rec = $parser->XMLin($data);
-    $self->_build_directory_map($rec,$var);
+    my ($status,$data) = $self->_fetch_recorded_data();
+    $var->{status} = $status;
+    if ($status eq 'ok') {
+	my $rec = $parser->XMLin($data);
+	$self->_build_directory_map($rec,$var);
+    } else {
+	print STDERR "ERROR: $status..." if $self->debug;
+	$var->{paths}{'.'} = {ctime  => time(),
+			      mtime  => time(),
+			      length => 2,
+			      type   => 'directory'};
+    }
     $Cache{recorded} = encode_json($var);
     $Cache{mtime}    = time();
     print STDERR "mtime set to $Cache{mtime}\n" if $self->debug;
@@ -570,13 +624,19 @@ sub _fetch_recorded_data {
     my $port = $self->port;
 
     my $http     = HTTP::Lite->new;
+    $http->http11_mode(1);
     my $retcode  = $http->request("http://$host:$port/Dvr/GetRecordedList");
-    unless ($retcode && $retcode =~ /^2\d\d/) {
-	warn "request failed with $retcode ",$http->status_message;
-	return;
+    my $status;
+
+    if ($retcode && $retcode =~ /^2\d\d/) {
+	$status = 'ok';
+    } elsif ($retcode) {
+	$status = "request failed with $retcode ",$http->status_message
+    } else {
+	$status = "no response from server";
     }
 
-    return $http->body;
+    return ($status,$http->body);
 }
 
 sub _build_directory_map {

@@ -8,7 +8,7 @@ mythfs.pl - Mount Fuse filesystem to display TV recordings managed by a MythTV b
 
  % mythfs.pl [options] <Hostname of Backend> <mount point>
 
-Long Options:
+Options:
 
   --pattern=<pattern>          filename pattern default ("%T/%S")
   --trim=<char>                 trim redundant occurrences of this character (no default)
@@ -31,28 +31,8 @@ Long Options:
   --help                        this text
   --man                         full manual page
 
-Short Options:
-
-  -p <pattern>           filename pattern default ("%T/%S")
-  -t <char>              trim redundant occurrences of this character (no default)
-
-  -m <path>              mountpoint/directory for locally stored recordings (no default)
-  -P <port>              HTTP request port on backend (6544)
-  -c <time>              cache time for recording names (10 minutes)
-
-  -u                     unmount the indicated directory
-  -f                     remain in foreground (false)
-  -n                     disable threads (false)
-  -d <1,2>               enable debugging. Pass -d 2 to trace Fuse operations (verbose!!)
-
-  -o allow_other          allow other accounts to access filesystem (false)
-  -o default_permissions  enable permission checking by kernel (false)
-  -o fsname=name          set filesystem name (none)
-  -o use_ino              let filesystem set inode numbers (false)
-  -o nonempty             allow mounts over non-empty file/dir (false)
-
-  -h                      this text
-  -m                      full manual page
+Options can be abbreviated to single letters. For example you can
+abbreviate "--pattern=<pattern>" to "-p <pattern>".
 
 =head1 DESCRIPTION
 
@@ -76,7 +56,6 @@ presented as symbolic links.
 
 Command line switches can abbreviated to single letters, so you can
 use "-p %T/%S" instead of "--pattern=%T/%S".
-
 
 If you request unmounting (using --unmount or -u), the first
 non-option argument is interpreted as the mountpoint, not the backend
@@ -189,6 +168,14 @@ The size of directories corresponds to the number of recordings (not
 counting subdirectories) contained within it. The modification time of
 directories is the start time of the most recent recording contained
 within it.
+
+Two automatically-created files are always present at the top level of
+the directory. "STATUS" contains a human-readable description of what
+happened the last time the script attempted to refresh the list of
+recordings from the backend. It is useful in diagnosing connection
+problems. ".fuse-mythfs" contains version and copyright information
+for this script, and can be used to detect if the Myth filesystem is
+mounted.
 
 =head2 Customizing the Directory Listing
 
@@ -319,7 +306,7 @@ GetOptions(
     'help|h|?'     => \$Help,
     'man|m'        => \$Man,
     'option|o:s'   => \@FuseOptions,
-    'cachetime|c=i'=> \$CacheTime,
+    'cachetime|c=f'=> \$CacheTime,
     'foreground|f' => \$NoDaemon,
     'pattern|p=s'  => \$Pattern,
     'debug|d:i'    => \$Debug,

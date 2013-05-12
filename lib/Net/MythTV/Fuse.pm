@@ -35,8 +35,9 @@ use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED);
 use Carp 'croak';
 
 use constant MARKER_FILE=> '.fuse-mythfs';
+use constant STATUS_FILE=> 'STATUS';
 
-our $VERSION = '1.31';
+our $VERSION = '1.32';
 
 my $Package = __PACKAGE__;
 my $Recorded;
@@ -157,7 +158,7 @@ sub fixup {
 
 sub e_open {
     my $path = fixup(shift);
-    return 0 if $path eq MARKER_FILE;
+    return 0 if $path eq MARKER_FILE or $path eq STATUS_FILE;
     
     $Recorded->valid_path($path) or return -ENOENT();
     $Recorded->is_dir($path)    and return -EISDIR();
@@ -178,6 +179,11 @@ sub e_read {
 	return substr($content,$offset,$size);
     }
 
+    if ($path eq STATUS_FILE) {
+	my $content = $Recorded->status;
+	return substr($content,$offset,$size);
+    }
+
     my ($retcode,$contents) = $Recorded->download_recorded_file($path,$size,$offset);
     return -ENOENT()       if $retcode eq 'not found';
     return -EINVAL()       if $retcode eq 'invalid offset';
@@ -189,8 +195,9 @@ sub e_getdir {
     my $path = fixup(shift) || '.';
 
     my @entries = $Recorded->entries($path);
-    return -ENOENT() unless @entries;
     unshift @entries,MARKER_FILE if $path eq '.';
+    unshift @entries,STATUS_FILE if $path eq '.';
+    return -ENOENT() unless @entries;
     return ('.','..',@entries,0);
 }
 
@@ -211,6 +218,13 @@ sub e_getattr {
 
     if ($path eq MARKER_FILE) { # special case
 	my $contents = copyright_and_version();
+	return (
+	    $dev,$ino,0100000|0444,$nlink,$uid,$gid,$rdev,
+	    length($contents),time(),time(),time(),$blksize,$blocks);
+    }
+
+    if ($path eq STATUS_FILE) { # another special case
+	my $contents = $Recorded->status;
 	return (
 	    $dev,$ino,0100000|0444,$nlink,$uid,$gid,$rdev,
 	    length($contents),time(),time(),time(),$blksize,$blocks);
