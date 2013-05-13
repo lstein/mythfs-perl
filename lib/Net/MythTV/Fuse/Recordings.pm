@@ -632,7 +632,7 @@ sub _refresh_recorded {
 sub _fetch_recorded_data {
     my $self = shift;
 
-    return $self->dummy_data if $self->dummy_data;
+    return ('ok',$self->dummy_data) if $self->dummy_data;
 
     my $host = $self->backend;
     my $port = $self->port;
