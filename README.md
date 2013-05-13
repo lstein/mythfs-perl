@@ -83,13 +83,13 @@ of symbolic links that point from a human readable file name to the
 recording file.
 
 The main advantage of creating symbolic links is that NFSv4 can be
-significantly faster than the backend streaming protocol -- about 1.6X
-in my informal tests. The main limitation is that this mode does not
-understand storage groups, so all recordings need to be located in a
-single storage group in a locally-accessible directory. However if a
-recording file is not found in local directory, then mythfs.pl will
-fall back to the streaming protocol, so the recording is accessible
-one way or another.
+noticeably faster than the backend streaming protocol -- about a 25%
+improvement on my local network. The main limitation is that this mode
+does not understand storage groups, so all recordings need to be
+located in a single storage group in a locally-accessible
+directory. However if a recording file is not found in local
+directory, then mythfs.pl will fall back to the streaming protocol, so
+the recording is accessible one way or another.
 
 The Default Directory Layout
 ============================

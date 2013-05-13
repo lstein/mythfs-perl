@@ -35,7 +35,7 @@ backend.
 
 use strict;
 use POSIX 'strftime';
-use HTTP::Lite;
+use LWP::UserAgent;
 use JSON qw(encode_json decode_json);
 use Date::Parse 'str2time';
 use XML::Simple;
@@ -511,18 +511,13 @@ sub download_recorded_file {
     my $sg       = $e->{storage};
     my $byterange= $offset.'-'.($offset+$size-1);
 
-    my $http = HTTP::Lite->new;
-    $http->http11_mode(1);
-    $http->add_req_header(Range => $byterange);
-
-    # by placing the request between semaphores, we ensure no more than maxgetws
-    # simultaneous fetches on the backend.
+    $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);
     $self->semaphore->down();
-    my $retcode = $http->request("http://$host:$port/Content/GetFile?StorageGroup=$sg&FileName=$basename");
+    my $response = $self->{ua}->get("http://$host:$port/Content/GetFile?StorageGroup=$sg&FileName=$basename",
+				    'Range'       => $byterange);
     $self->semaphore->up();
-
-    $retcode && $retcode =~ /^2\d\d/ or return 'connection failed';
-    return ('ok',$http->body);
+    $response->is_success or return 'connection failed';
+    return ('ok',$response->decoded_content);
 }
 
 =head2 $path = $r->apply_pattern($entry)
@@ -637,20 +632,17 @@ sub _fetch_recorded_data {
     my $host = $self->backend;
     my $port = $self->port;
 
-    my $http     = HTTP::Lite->new;
-    $http->http11_mode(1);
-    my $retcode  = $http->request("http://$host:$port/Dvr/GetRecordedList");
-    my $status;
+    $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);
+    my $response = $self->{ua}->get("http://$host:$port/Dvr/GetRecordedList");
 
-    if ($retcode && $retcode =~ /^2\d\d/) {
+    my $status;
+    if ($response->is_success) {
 	$status = 'ok';
-    } elsif ($retcode) {
-	$status = "request failed with $retcode ",$http->status_message
     } else {
-	$status = "no response from server";
+	$status = "Recording list request failed with ".$response->status_line;
     }
 
-    return ($status,$http->body);
+    return ($status,$response->decoded_content);
 }
 
 sub _build_directory_map {

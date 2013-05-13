@@ -1,3 +1,6 @@
+1.33 Mon May 13 12:38:20 EDT 2013
+     * Significantly improved performance (~30%) by using LWP and activating keepalives.
+
 1.32 Sun May 12 12:12:24 EDT 2013
      * Create STATUS file at top level, and better reporting of errors.
      * Add %TC and %ST substitution patterns (needs generalization).

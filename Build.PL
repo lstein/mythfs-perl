@@ -12,12 +12,12 @@ my $build = Module::Build->new(
     dist_author       => 'Lincoln Stein <lincoln.stein@oicr.on.ca>',
     configure_requires => { 'Module::Build' => 0 },
     requires          => {
-      'Fuse'         => '0.09',
-      'HTTP::Lite'   => '2.30',
-      'Date::Parse'  => '2.30',
-      'XML::Simple'  => '2.18',
-      'JSON'         => 0,
-      'threads'      => 0,
+      'Fuse'          => '0.09',
+      'LWP::UserAgent'=> '6.00',
+      'Date::Parse'   => '2.30',
+      'XML::Simple'   => '2.18',
+      'JSON'          => 0,
+      'threads'       => 0,
     },
     build_class        => 'Module::Build',
     );
