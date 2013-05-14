@@ -32,10 +32,12 @@ use warnings;
 use Net::MythTV::Fuse::Recordings;
 use Fuse 'fuse_get_context';
 use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED);
+use Data::Dumper 'Dumper'; # for DEBUGGING!
 use Carp 'croak';
 
 use constant MARKER_FILE=> '.fuse-mythfs';
 use constant STATUS_FILE=> 'STATUS';
+use constant UPCOMING_FILE=> 'UPCOMING';
 
 our $VERSION = '1.33';
 
@@ -158,7 +160,9 @@ sub fixup {
 
 sub e_open {
     my $path = fixup(shift);
-    return 0 if $path eq MARKER_FILE or $path eq STATUS_FILE;
+
+    # awkward: fix
+    return 0 if $path eq MARKER_FILE or $path eq STATUS_FILE or $path eq UPCOMING_FILE;
     
     $Recorded->valid_path($path) or return -ENOENT();
     $Recorded->is_dir($path)    and return -EISDIR();
@@ -174,6 +178,7 @@ sub e_read {
     $offset ||= 0;
     $path = fixup($path);
 
+    # we need to create a special method for these special files
     if ($path eq MARKER_FILE) {
 	my $content = copyright_and_version();
 	return substr($content,$offset,$size);
@@ -181,6 +186,11 @@ sub e_read {
 
     if ($path eq STATUS_FILE) {
 	my $content = $Recorded->status;
+	return substr($content,$offset,$size);
+    }
+
+    if ($path eq UPCOMING_FILE) {
+	my $content = _get_upcoming_list();
 	return substr($content,$offset,$size);
     }
 
@@ -195,8 +205,7 @@ sub e_getdir {
     my $path = fixup(shift) || '.';
 
     my @entries = $Recorded->entries($path);
-    unshift @entries,MARKER_FILE if $path eq '.';
-    unshift @entries,STATUS_FILE if $path eq '.';
+    unshift @entries,MARKER_FILE,STATUS_FILE,UPCOMING_FILE if $path eq '.';
     return -ENOENT() unless @entries;
     return ('.','..',@entries,0);
 }
@@ -230,6 +239,13 @@ sub e_getattr {
 	    length($contents),time(),time(),time(),$blksize,$blocks);
     }
 
+    if ($path eq UPCOMING_FILE) { # another special case
+	my $content = _get_upcoming_list();
+	return (
+	    $dev,$ino,0100000|0444,$nlink,$uid,$gid,$rdev,
+	    length($content),time(),time(),time(),$blksize,$blocks);
+    }
+
     my $entry    = $Recorded->entry($path) or return -ENOENT();
 
     my $basename = $entry->{basename};
@@ -253,6 +269,11 @@ mythfs.pl version $VERSION.
 Copyright 2013 Lincoln D. Stein <lincoln.stein\@gmail.com>. 
 Distributed under Perl Artistic License Version 2.
 END
+}
+
+sub _get_upcoming_list {
+    my $self = shift;
+    return $Recorded->get_upcoming_list;
 }
 
 

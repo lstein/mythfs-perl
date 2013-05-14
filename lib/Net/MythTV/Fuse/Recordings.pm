@@ -32,7 +32,6 @@ backend.
 
 =cut
 
-
 use strict;
 use POSIX 'strftime';
 use LWP::UserAgent;
@@ -152,6 +151,36 @@ use constant Templates => {
     '%'  => '%',
     };
 
+use constant REC_CODES => {
+    -13  => "Other recording",
+    -12  => "Other tuning",
+    -11  => "Backend not running",
+    -10  => "The showing is being tuned",
+    -9   => "The recorder failed to record",
+    -8   => "The tuner card was busy",
+    -7   => "Low disk space",
+    -6   => "Manual cancel",
+    -5   => "Missed recording",
+    -4   => "Aborted",
+    -3   => "Recorded",
+    -2   => "Now recording",
+    -1   => "Will record",
+    0    => "Unknown status code",
+    1    => "Don't record",
+    2    => "Previously recorded",
+    3    => 'Currently recorded',
+    4    => "Earlier showing",
+    5    => "Max recordings",
+    6    => "Not listed",
+    7    => 'Conflict',
+    8    => 'Later showing',
+    9    => 'Repeat',
+    10   => 'Rule inactive',
+    11   => 'Never record',
+    12   => 'Recorder off-line',
+    13   => 'Other showing',
+};
+
 my $Package = __PACKAGE__;
 foreach (qw(debug backend port dummy_data cache cachetime maxgets threaded
             pattern delimiter mtime localmount semaphore)) {
@@ -243,6 +272,8 @@ sub start_update_thread {
     $self->_refresh_recorded 
 	or croak "Could not contact backend at ",$self->backend,':',$self->port;
     return unless $self->threaded;
+
+    # this updates the recordings
     my $thr = threads->create(
 	sub {
 	    while (1) {
@@ -251,6 +282,17 @@ sub start_update_thread {
 	    }
 	}
 	);
+
+    $thr->detach();
+
+    # this updates upcoming recordings at a less frequent interval
+    $thr = threads->create(
+	sub {
+	    while (1) {
+		$self->_refresh_upcoming;
+		sleep(60*60); # 1 hour, hard coded
+	    }
+	});
     $thr->detach();
 }
 
@@ -538,6 +580,57 @@ sub apply_pattern {
 
     $template =~ s/%($match)/$pat_sub->($recording,$1)/eg;
     return $template;
+}
+
+sub _refresh_upcoming {
+    my $self = shift;
+    my $host     = $self->backend;  
+    my $port     = $self->port;
+    my $ua = $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);
+    my $response = $ua->get("http://$host:$port/Dvr/GetUpcomingList?ShowAll=true");
+    $response->is_success or return;
+
+    lock %Cache;
+    my $upcoming = XML::Simple->new(SuppressEmpty=>1)->XMLin($response->decoded_content);
+    $Cache{Upcoming} = encode_json($upcoming);
+}
+
+=head2 $upcoming = $r->get_upcoming_list
+
+Get a list of upcoming recordings. This is an array reference of hashes parsed from the XML 
+shown at http://www.mythtv.org/wiki/DVR_Service#GetUpcomingList.
+
+=cut
+
+sub get_upcoming_list {
+    my $self = shift;
+    lock %Cache;
+    $Cache{Upcoming} or return "No upcoming list. Threads must be enabled to activate this feature.\n";
+    my $response = '';
+    eval {
+	my $upcoming = decode_json($Cache{Upcoming});
+	my $programs = $upcoming->{Programs}{Program};
+	for my $p (@$programs) {
+
+	    my ($start,$end) = map {strftime('%H:%M',localtime(str2time($_)))} @{$p}{'StartTime','EndTime'};
+	    my $date         = strftime('%a %e-%b',localtime(str2time($p->{StartTime})));
+	    my $code         = REC_CODES->{$p->{Recording}{Status}};
+	    $code           .= " (Tuner $p->{Recording}{EncoderId})" if $p->{Recording}{Status} == -1;
+	    my $title        = join (' - ',$p->{Title},$p->{SubTitle});
+	    $title           =~ s/ - $//;
+	    
+	    $response .= sprintf("%-50.50s %4s %7s %10s %5s-%5s %12s\n",
+				 $title,
+				 $p->{Channel}{ChanNum},
+				 $p->{Channel}{ChannelName},
+				 $date,
+				 $start,
+				 $end,
+				 $code);
+	}
+    };
+    return $@ if $@;
+    return $response;
 }
 
 sub _compile_pattern_sub {
