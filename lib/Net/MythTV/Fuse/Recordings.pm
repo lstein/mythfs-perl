@@ -798,6 +798,10 @@ sub _build_directory_map {
 	$map->{paths}{$path}{storage}  = $meta->{Recording}{StorageGroup};
 	$map->{paths}{$path}{ctime}    = $ctime;
 	$map->{paths}{$path}{mtime}    = $mtime;
+
+	# for recording removal
+	$map->{paths}{$path}{chanid}    = $meta->{Channel}{ChanId};
+	$map->{paths}{$path}{starttime} = $meta->{StartTime};  # slightly redundant information
 	
 	# take care of the directories
 	my $dir = '';
