@@ -562,6 +562,37 @@ sub download_recorded_file {
     return ('ok',$response->decoded_content);
 }
 
+sub delete_recording {
+    my $self = shift;
+    my $path = shift;
+    my $r    = $self->get_recorded;
+    my $e    = $r->{paths}{$path} or return 'not found';
+
+    my $host     = $e->{host} || $self->backend;  
+    my $port     = $self->port;
+    my $chanid   = $e->{chanid};
+    my $starttime= $e->{starttime};
+
+    my $url = "http://$host:$port/Dvr/RemoveRecorded?ChanId=$chanid&StartTime=$starttime";
+    warn "pretending to execute $url";
+
+    $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);    
+    # POST etc
+    my $success = 1;
+    if ($success) {
+	delete $r->{paths}{$path};
+	my $file = basename($path);
+	my $dir  = dirname($path);
+	delete $r->{directories}{$dir}{$file};
+	delete $r->{paths}{$dir} unless keys %{$dir->{directories}{$dir}};
+	$self->flush_cache($r);
+	return 'ok';
+    } else {
+	return 'delete failed';
+    }
+    
+}
+
 =head2 $path = $r->apply_pattern($entry)
 
 =cut
