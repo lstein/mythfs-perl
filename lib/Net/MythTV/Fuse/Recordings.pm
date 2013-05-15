@@ -183,7 +183,7 @@ use constant REC_CODES => {
 
 my $Package = __PACKAGE__;
 foreach (qw(debug backend port dummy_data cache cachetime maxgets threaded
-            pattern delimiter mtime localmount semaphore)) {
+            pattern delimiter mtime localmount semaphore update_thread)) {
     eval <<END;
 sub ${Package}::${_} {
     my \$self = shift;
@@ -273,20 +273,40 @@ sub start_update_thread {
 	or croak "Could not contact backend at ",$self->backend,':',$self->port;
     return unless $self->threaded;
 
-    # this updates the recordings
-    my $thr = threads->create(
+    # this whole thing is not working!
+    my $Timer = Thread::Semaphore->new();
+    my $timer = threads->create(
 	sub {
 	    while (1) {
+		$Timer->down();  # block
+		warn "sleeping";
 		sleep ($self->cachetime);
-		$self->_refresh_recorded;
+		$Timer->up();
+		threads->yield();
 	    }
 	}
 	);
 
-    $thr->detach();
+    $timer->detach();
+
+    # this updates the recordings
+    my $update_thread = threads->create (
+	sub {
+	    $SIG{HUP} = sub { $Timer->up() };
+	    while (1) {
+		$Timer->down(); # block
+		$self->_refresh_recorded;
+		$Timer->up();
+		threads->yield();
+	    }
+	}
+	);
+
+    $update_thread->detach();
+    $self->update_thread($update_thread);
 
     # this updates upcoming recordings at a less frequent interval
-    $thr = threads->create(
+    my $thr = threads->create(
 	sub {
 	    while (1) {
 		$self->_refresh_upcoming;
@@ -294,6 +314,11 @@ sub start_update_thread {
 	    }
 	});
     $thr->detach();
+}
+
+sub _test_signal {
+    my $self = shift;
+    $self->update_thread->kill('HUP');
 }
 
 =head2 $recordings = $r->get_recorded

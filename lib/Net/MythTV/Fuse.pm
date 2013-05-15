@@ -166,6 +166,9 @@ sub e_open {
     
     $Recorded->valid_path($path) or return -ENOENT();
     $Recorded->is_dir($path)    and return -EISDIR();
+
+    warn "testing sigHUP functionality";
+    $Recorded->_test_signal();
     return 0;
 }
 
