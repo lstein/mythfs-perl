@@ -275,14 +275,13 @@ sub start_update_thread {
 
     # this whole thing is not working!
     my $Timer = Thread::Semaphore->new();
+    $Timer->down();
     my $timer = threads->create(
 	sub {
 	    while (1) {
-		$Timer->down();  # block
-		warn "sleeping";
 		sleep ($self->cachetime);
+		warn scalar localtime()," timer loop releasing semaphore";
 		$Timer->up();
-		threads->yield();
 	    }
 	}
 	);
@@ -292,18 +291,18 @@ sub start_update_thread {
     # this updates the recordings
     my $update_thread = threads->create (
 	sub {
-	    $SIG{HUP} = sub { $Timer->up() };
 	    while (1) {
+		warn "waiting for semaphore...";
 		$Timer->down(); # block
+		warn "...semaphore acquired";
 		$self->_refresh_recorded;
-		$Timer->up();
-		threads->yield();
 	    }
 	}
 	);
 
     $update_thread->detach();
     $self->update_thread($update_thread);
+    $self->{timer_semaphore} = $Timer;
 
     # this updates upcoming recordings at a less frequent interval
     my $thr = threads->create(
@@ -318,7 +317,7 @@ sub start_update_thread {
 
 sub _test_signal {
     my $self = shift;
-    $self->update_thread->kill('HUP');
+    $self->{timer_semaphore}->up();
 }
 
 =head2 $recordings = $r->get_recorded
