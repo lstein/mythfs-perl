@@ -31,7 +31,7 @@ use strict;
 use warnings;
 use Net::MythTV::Fuse::Recordings;
 use Fuse 'fuse_get_context';
-use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED);
+use POSIX qw(ENOENT EISDIR EINVAL ECONNABORTED EACCES EIO);
 use Data::Dumper 'Dumper'; # for DEBUGGING!
 use Carp 'croak';
 
@@ -126,6 +126,7 @@ sub run {
 	       getdir     => "$Package\:\:e_getdir",
 	       getattr    => "$Package\:\:e_getattr",
 	       open       => "$Package\:\:e_open",
+	       unlink     => "$Package\:\:e_unlink",
 	       read       => "$Package\:\:e_read",
 	       release    => "$Package\:\:e_release",
 	       readlink   => "$Package\:\:e_readlink",
@@ -170,6 +171,18 @@ sub e_open {
 }
 
 sub e_release {
+    return 0;
+}
+
+sub e_unlink {
+    my $path   = fixup(shift);
+
+    $Recorded->valid_path($path) or return -ENOENT();
+    $Recorded->is_dir($path)    and return -EISDIR();
+    return -EACCES() if $path eq MARKER_FILE or $path eq STATUS_FILE or $path eq UPCOMING_FILE;   
+
+    my $status = $Recorded->delete_recording($path);
+    $status eq 'ok' or return -EIO();
     return 0;
 }
 
@@ -252,7 +265,7 @@ sub e_getattr {
     my $isdir    = $entry->{type} eq 'directory';
     my $islink   = $entry->{type} eq 'file' && $Recorded->localmount && -r $Recorded->localmount."/$basename";
 
-    my $mode = $isdir ? 0040000|0555 : ($islink ? 0120000|0777 : 0100000|0444);
+    my $mode = $isdir ? 0040000|0655 : ($islink ? 0120000|0777 : 0100000|0644);
 
     my $ctime = $entry->{ctime};
     my $mtime = $entry->{mtime};

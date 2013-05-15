@@ -42,6 +42,7 @@ use threads;
 use threads::shared;
 use Thread::Semaphore;
 use Config;
+use File::Basename ();
 use Carp 'croak';
 
 use constant CACHETIME => 60*5;  # 5 minutes
@@ -562,6 +563,12 @@ sub download_recorded_file {
     return ('ok',$response->decoded_content);
 }
 
+=head2 $status = $r->delete_recording($path)
+
+Returns "ok" if successful.
+
+=cut
+
 sub delete_recording {
     my $self = shift;
     my $path = shift;
@@ -581,10 +588,10 @@ sub delete_recording {
     my $success = 1;
     if ($success) {
 	delete $r->{paths}{$path};
-	my $file = basename($path);
-	my $dir  = dirname($path);
+	my $file = File::Basename::basename($path);
+	my $dir  = File::Basename::dirname($path);
 	delete $r->{directories}{$dir}{$file};
-	delete $r->{paths}{$dir} unless keys %{$dir->{directories}{$dir}};
+	delete $r->{paths}{$dir} unless keys %{$r->{directories}{$dir}};
 	$self->flush_cache($r);
 	return 'ok';
     } else {
@@ -719,6 +726,16 @@ sub load_dummy_data {
     local $/;
     my $dummy_data = <$fh>;
     $self->dummy_data($dummy_data) if $dummy_data;
+}
+
+sub flush_cache {
+    my $self  = shift;
+    my $cache = shift;   # should be the same as $self->cache
+    lock %Cache;
+    $Cache{recorded} = encode_json($cache);
+    warn "time = ",time();
+    $Cache{mtime}    = time();
+    warn scalar localtime()," setting Cache{mtime} to $Cache{mtime}";
 }
 
 sub _refresh_recorded {

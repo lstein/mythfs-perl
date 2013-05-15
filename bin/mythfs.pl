@@ -341,7 +341,8 @@ my $host       = shift or pod2usage(1);
 my $mountpoint = shift or pod2usage(1);
 $mountpoint    = File::Spec->rel2abs($mountpoint);
 
-my $options  = join(',',@FuseOptions,'ro');
+#my $options  = join(',',@FuseOptions,'ro');
+my $options  = join(',',@FuseOptions);
 
 die "Myth filesystem is already mounted on $mountpoint. Use fusermount -u $mountpoint to unmount.\n"
     if -e "$mountpoint/".Net::MythTV::Fuse->marker_file;
