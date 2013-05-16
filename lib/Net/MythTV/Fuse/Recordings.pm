@@ -389,10 +389,11 @@ sub get_recorded {
     return $cache if $cache && $nocache;
 
     $self->_refresh_recorded if !$self->threaded && (time() - $Cache{mtime} >= $self->cachetime);
+
+    lock %Cache;
     return $cache            if $cache && $self->mtime >= $Cache{mtime};
 
     warn scalar localtime()," refreshing thread-level cache, mtime = $Cache{mtime}\n" if $self->debug;
-    lock %Cache;
     $self->mtime($Cache{mtime});
     return $self->cache(decode_json($Cache{recorded}||''));
 }
@@ -565,39 +566,76 @@ sub download_recorded_file {
 
 =head2 $status = $r->delete_recording($path)
 
-Returns "ok" if successful.
+Call on a path to delete the indicated recording. Returns "ok" if
+successful. Otherwise may return "not found" for an invalid path, or
+"delete failed: " plus some explanatory text describing an error on
+the backend.
 
 =cut
 
 sub delete_recording {
     my $self = shift;
     my $path = shift;
-    my $r    = $self->get_recorded;
+
+    # deal with Cache directly, otherwise we get race conditions
+    lock %Cache;
+    my $r    = decode_json($Cache{recorded});
     my $e    = $r->{paths}{$path} or return 'not found';
 
     my $host     = $e->{host} || $self->backend;  
     my $port     = $self->port;
     my $chanid   = $e->{chanid};
     my $starttime= $e->{starttime};
+    $starttime   =~ s/Z$//;
 
-    my $url = "http://$host:$port/Dvr/RemoveRecorded?ChanId=$chanid&StartTime=$starttime";
-    warn "pretending to execute $url";
+    my $url      = "http://$host:$port/Dvr/RemoveRecorded?ChanId=$chanid&StartTime=$starttime";
+    my $ua       = $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);
+    my $response = $ua->post("http://$host:$port/Dvr/RemoveRecorded?ChanId=$chanid&StartTime=$starttime");
+    $response->is_success or return "delete failed: ".$response->status_line;
+    my $success = $response->decoded_content =~ m!<bool>true</bool>!;
 
-    $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);    
-    # POST etc
-    my $success = 1;
     if ($success) {
-	delete $r->{paths}{$path};
 	my $file = File::Basename::basename($path);
 	my $dir  = File::Basename::dirname($path);
+	delete $r->{paths}{$path};
 	delete $r->{directories}{$dir}{$file};
-	delete $r->{paths}{$dir} unless keys %{$r->{directories}{$dir}};
-	$self->flush_cache($r);
+	$Cache{recorded} = encode_json($r);
+	$Cache{mtime}    = $self->mtime+1;  # force a cache invalidation
 	return 'ok';
     } else {
-	return 'delete failed';
+	return 'delete failed: '.$response->decoded_content;
     }
-    
+}
+
+=head2 $status = $r->delete_directory($path)
+
+Call on a path to delete the indicated directory. The directory must
+be empty. The returned status string will be "ok", or one of "not
+found", "not a directory" or "directory not empty".
+
+=cut
+
+sub delete_directory {
+    my $self = shift;
+    my $path = shift;
+
+    warn "delete_directory($path)";
+
+    # deal with Cache directly, otherwise we get race conditions
+    lock %Cache;
+    my $r    = decode_json($Cache{recorded});
+    my $e    = $r->{paths}{$path}    || return 'not found';
+    $e->{type} eq 'directory'        || return 'not a directory';
+    keys %{$r->{directories}{$path}} && return 'directory not empty';
+
+    my $parent = File::Basename::dirname($path) || '.';
+    my $base   = File::Basename::basename($path);
+    delete $r->{directories}{$path};
+    delete $r->{directories}{$parent}{$base};
+    delete $r->{paths}{$path};
+    $Cache{recorded} = encode_json($r);
+    $Cache{mtime}    = $self->mtime+1;  # force a cache invalidation
+    return 'ok';
 }
 
 =head2 $path = $r->apply_pattern($entry)
@@ -726,16 +764,6 @@ sub load_dummy_data {
     local $/;
     my $dummy_data = <$fh>;
     $self->dummy_data($dummy_data) if $dummy_data;
-}
-
-sub flush_cache {
-    my $self  = shift;
-    my $cache = shift;   # should be the same as $self->cache
-    lock %Cache;
-    $Cache{recorded} = encode_json($cache);
-    warn "time = ",time();
-    $Cache{mtime}    = time();
-    warn scalar localtime()," setting Cache{mtime} to $Cache{mtime}";
 }
 
 sub _refresh_recorded {

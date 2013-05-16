@@ -26,7 +26,10 @@ Options:
   --option=default_permissions  enable permission checking by kernel (false)
   --option=fsname=name          set filesystem name (none)
   --option=use_ino              let filesystem set inode numbers (false)
+  --option=direct_io            disable page cache (false)
   --option=nonempty             allow mounts over non-empty file/dir (false)
+  --option=ro                   mount read-only
+  -o ro,direct_io,etc           shorter version of options
 
   --help                        this text
   --man                         full manual page
@@ -235,7 +238,7 @@ you use, and dangling/extra delimiters will be trimmed:
 </pre>
 
 If after applying the pattern to a recording the resulting path is not
-unique, then this script will uniqueify the path by appending to it
+unique, then this script will make the path unique by appending to it
 the channel number and recording start time, for example:
 
  Masterpiece Classic/Downtown Abbey_17_1-2013-02-11T02:00.mpg
@@ -246,14 +249,25 @@ the channel number and recording start time, for example:
 New and updated recordings will appear in the filesystem after a
 slight delay due to the manner in which the script caches the
 recording list. By default the backend is only checked for updates
-every 10 minutes, but you can adjust this using the --cachetime
-option, which takes the interval in minutes at which the system
-checks for new and updated recordings.
+every 5 minutes, but you can adjust this using the --cachetime option,
+which takes the interval in minutes at which the system checks for new
+and updated recordings.
 
 For example, this command will reduce the update interval to 2
 minutes:
 
   $ mythfs.pl MyHost --cachetime=2 /tmp/mythfs
+
+You can provide a fractional number, such as 0.5, for sub-minute
+intervals.
+
+=head2 File Removal
+
+Removing a file (with the rm command) will cause the backend to delete
+the corresponding recording. You may recursively delete entire
+directories, and all the recordings contained within them will be
+deleted. Mount the file system read-only ("-o ro") to make it
+impossible to delete recordings inadvertently.
 
 =head2 Fuse Notes
 
@@ -341,7 +355,6 @@ my $host       = shift or pod2usage(1);
 my $mountpoint = shift or pod2usage(1);
 $mountpoint    = File::Spec->rel2abs($mountpoint);
 
-#my $options  = join(',',@FuseOptions,'ro');
 my $options  = join(',',@FuseOptions);
 
 die "Myth filesystem is already mounted on $mountpoint. Use fusermount -u $mountpoint to unmount.\n"
