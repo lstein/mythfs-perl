@@ -275,6 +275,13 @@ sub e_getattr {
 
     my $entry    = $Recorded->entry($path) or return -ENOENT();
 
+    # debugging an occasional error
+    unless ($entry->{type}) {
+	warn "broken entry for path =$path";
+	print STDERR Data::Dumper::Dumper($entry);
+	return -ENOENT();
+    }
+
     my $basename = $entry->{basename};
     my $isdir    = $entry->{type} eq 'directory';
     my $islink   = $entry->{type} eq 'file' && $Recorded->localmount && -r $Recorded->localmount."/$basename";
