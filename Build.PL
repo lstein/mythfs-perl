@@ -19,6 +19,16 @@ my $build = Module::Build->new(
       'JSON'          => 0,
       'threads'       => 0,
     },
+    'meta_merge' => {
+      'keywords' => [
+        'FUSE',
+        'MythTV',
+        'file system',
+      ],
+      'resources' => {
+        'repository' => 'https://github.com/lstein/mythfs-perl'
+      }
+    },
     build_class        => 'Module::Build',
     );
 
