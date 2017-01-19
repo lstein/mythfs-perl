@@ -16,7 +16,7 @@ my $build = Module::Build->new(
       'LWP::UserAgent'=> '6.00',
       'Date::Parse'   => '2.30',
       'XML::Simple'   => '2.18',
-	  'Version::Compare' => '0.14',
+      'Version::Compare' => '0.14',
       'JSON'          => 0,
       'threads'       => 0,
     },
