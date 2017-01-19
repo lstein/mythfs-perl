@@ -310,6 +310,7 @@ use POSIX 'setsid';
 
 use Getopt::Long qw(:config no_ignore_case bundling_override);
 use Pod::Usage;
+use Version::Compare;
 
 my (@FuseOptions,$CacheTime,$Debug,$NoDaemon,$Pattern,
     $LocalMount,$NoThreads,$Delimiter,
@@ -384,7 +385,7 @@ sub check_disable_threads {
 	warn "This version of perl is not compiled for ithreads. Running with slower non-threaded version.\n";
 	return 1;
     }
-    if ($] >= 5.014 && $Fuse::VERSION < 0.15) {
+    if ($] >= 5.014 && (&Version::Compare::version_compare($Fuse::VERSION, '0.15') == -1)) {
 	warn "You need Fuse version 0.15 or higher to run under this version of Perl.\n";
 	warn "Threads will be disabled. Running with slower non-threaded version.\n";
 	return 1;
