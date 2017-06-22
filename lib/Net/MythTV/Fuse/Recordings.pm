@@ -156,7 +156,9 @@ use constant Templates => {
     PLX => <<'END',
     do {
        my $r = '';
-       if ($recording->{CatType} eq 'series' || $recording->{Season}) {
+       my $ct = $recording->{CatType};
+       if ($ct eq 'series' || $ct eq 'tvshow' || $recording->{Season}) {
+          $r .= 'TV Shows/';
           $r .= "$recording->{Title}/";
           if ($recording->{Season}) {
              $r .= "Season $recording->{Season}/";
@@ -170,8 +172,14 @@ use constant Templates => {
              $r .= " - $recording->{SubTitle}" if $recording->{SubTitle};
           }
        } else {
-          $r .= "TV Movies/$recording->{Title} - $recording->{Airdate}";
-          $r .= " - $recording->{SubTitle}" if $recording->{SubTitle};
+          $r .= 'Movies/';
+          my ($yr) = $recording->{Airdate} =~ /^(\d+)/;
+          $r .= "$recording->{Title}";
+          $r .= " ($yr)" if $yr;
+          $r .= "/";
+          $r .= "$recording->{Title}";
+          $r .= ", $recording->{SubTitle}" if $recording->{SubTitle};
+          $r .= " ($yr)" if $yr;
        }
        return $r;
     } 
