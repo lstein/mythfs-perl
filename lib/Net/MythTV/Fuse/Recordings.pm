@@ -59,8 +59,9 @@ use constant Templates => {
     C  => '{Category}',
     ST => '{SubTitle}?{SubTitle}:{Title}',   # prefer %S?%S:%T
     TC => '{SubTitle}?{Title}:{Category}',   # prefer %S?%T:%C
-    se => '{Season}',
-    e  => '{Episode}',
+    se =>  'sprintf("%02d",$recording->{Season})',
+    e   => 'sprintf("%02d",$recording->{Episode})',
+    see => '$recording->{Season} && $recording->{Episode} ? sprintf("s%02de%02d",$recording->{Season},$recording->{Episode}):""',
     PI => '{ProgramId}',
     SI => '{SeriesId}',
     st => '{Stars}',
@@ -150,6 +151,32 @@ use constant Templates => {
     oB   => '%B{Airdate}',
 
     '%'  => '%',
+
+    # special format for Plex server
+    PLX => <<'END',
+    do {
+       my $r = '';
+       if ($recording->{CatType} eq 'series' || $recording->{Season}) {
+          $r .= "$recording->{Title}/";
+          if ($recording->{Season}) {
+             $r .= "Season $recording->{Season}/";
+             $r .= sprintf("%s - s%02de%02d - %s",$recording->{Title},$recording->{Season},$recording->{Episode});
+             $r .= " - $recording->{SubTitle}" if defined $recording->{SubTitle};
+          } else {
+             my ($heuristic_season) = $recording->{SubTitle} =~ /(?:Season|Series)\s+(\d+)/;
+             ($heuristic_season)    = $recording->{Airdate} =~ /^(\d+)/ unless $heuristic_season; # year instead of season
+             $heuristic_season    ||= '00';
+             $r .= "Season $heuristic_season/$recording->{Title} - $recording->{Airdate}";
+             $r .= " - $recording->{SubTitle}" if $recording->{SubTitle};
+          }
+       } else {
+          $r .= "TV Movies/$recording->{Title} - $recording->{Airdate}";
+          $r .= " - $recording->{SubTitle}" if $recording->{SubTitle};
+       }
+       return $r;
+    } 
+END
+
     };
 
 use constant REC_CODES => {
@@ -555,7 +582,7 @@ sub download_recorded_file {
     my $sg       = $e->{storage};
     my $byterange= $offset.'-'.($offset+$size-1);
 
-    $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);
+    $self->{ua} ||= LWP::UserAgent->new(keep_alive=>undef);
     $self->semaphore->down();
     my $response = $self->{ua}->get("http://$host:$port/Content/GetFile?StorageGroup=$sg&FileName=$basename",
 				    'Range'       => $byterange);
@@ -589,10 +616,14 @@ sub delete_recording {
     $starttime   =~ s/Z$//;
 
     my $url      = "http://$host:$port/Dvr/RemoveRecorded?ChanId=$chanid&StartTime=$starttime";
-    my $ua       = $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);
+    my $ua       = $self->{ua} ||= LWP::UserAgent->new(keep_alive=>undef);
+    warn "DELETE: POST $url";
+
     my $response = $ua->post("http://$host:$port/Dvr/RemoveRecorded?ChanId=$chanid&StartTime=$starttime");
     $response->is_success or return "delete failed: ".$response->status_line;
     my $success = $response->decoded_content =~ m!<bool>true</bool>!;
+
+    warn "DELETE: ",$response->decoded_content;
 
     if ($success) {
 	my $file = File::Basename::basename($path);
@@ -605,6 +636,7 @@ sub delete_recording {
     } else {
 	return 'delete failed: '.$response->decoded_content;
     }
+
 }
 
 =head2 $status = $r->delete_directory($path)
@@ -662,7 +694,7 @@ sub _refresh_upcoming {
     my $self = shift;
     my $host     = $self->backend;  
     my $port     = $self->port;
-    my $ua = $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);
+    my $ua = $self->{ua} ||= LWP::UserAgent->new(keep_alive=>undef);
     my $response = $ua->get("http://$host:$port/Dvr/GetUpcomingList?ShowAll=true");
     $response->is_success or return;
 
@@ -718,40 +750,48 @@ sub _compile_pattern_sub {
 
     my $sub = "sub {\n";
     $sub   .= "my (\$recording,\$code) = \@_;\n";
+    $sub   .= "my \$val='';\n";
+    $sub   .= "BLOCK: {\n";
 
-    while ($template =~ /%([a-zA-Z%]{1,3})/g) {
-	my $code = $1;
-	my $field = $Templates->{$code} or next;
+    for my $code (sort {length($b)<=>length($a)} keys %$Templates) {
+	next unless $template =~ /%$code/;
+	my $field = $Templates->{$code};
+
+	$sub .= "if (\$code eq '$code') {\n";
+
 	if ($field eq '%') {
-	    $sub .= "return '%' if \$code eq '$code';\n";
-	    next;
+	    $sub .= "\$val = '%';\n";
 	}
-	if ($field =~ /(%\w+)(\{\w+\})/) { #datetime specifier
-	    $sub .= "return strftime('$1',localtime(str2time(\$recording->$2)||0)) if \$code eq '$code';\n";
-	    next;
+	
+	elsif ($field =~ /(%\w+)(\{\w+\})/) { #datetime specifier
+	    $sub .= "\$val = strftime('$1',localtime(str2time(\$recording->$2)||0));\n";
 	}
-	if ($field =~ /(.+)\?(.+)\:(.+)/) {  # something like '{SubTitle}?{SubTitle}:{Title}'
-	    $sub .= <<END;
-	    if (\$code eq '$code') {
-		my \$val = \$recording->$1?\$recording->$2:\$recording->$3;
-		\$val  ||= '';
-		\$val =~ tr!a-zA-Z0-9_.,&\@:* ^\\![]{}(),?#\$=+%-!_!c;
-		return \$val;
-	    }
-END
-    next;
+	
+	elsif ($field =~ /(.+)\?(.+)\:(.+)/) {  # something like '{SubTitle}?{SubTitle}:{Title}'
+	    $sub .= "\$val = \$recording->$1?\$recording->$2:\$recording->$3;\n";
 	}
 
-	$sub .= <<END;
-	if (\$code eq '$code') {
-	    my \$val = \$recording->$field || '';
-	    \$val =~ tr!a-zA-Z0-9_.,&\@:* ^\\![]{}(),?#\$=+%-!_!c;
-	    return \$val;
+	elsif ($field =~ /^{/) {
+	    $sub .= "\$val = \$recording->$field || '';\n";
 	}
-END
-    ;
+
+	else {  # something else - has to be a perl expression
+	    $sub .= "\$val = $field;\n";
+	}
+	
+	$sub .= "last BLOCK;\n";
+	$sub .= "}\n";
     }
+
+    $sub .= <<END;
+    }
+    \$val ||= '';
+    \$val =~ tr!/!_!;
+    return \$val;
+END
+
     $sub .= "}\n";
+
     my $s = eval $sub;
     die $@ if $@;
     return $self->{pattern_sub} = $s;
@@ -801,7 +841,7 @@ sub _fetch_recorded_data {
     my $host = $self->backend;
     my $port = $self->port;
 
-    $self->{ua} ||= LWP::UserAgent->new(keep_alive=>20);
+    $self->{ua} ||= LWP::UserAgent->new(keep_alive=>undef);
     my $response = $self->{ua}->get("http://$host:$port/Dvr/GetRecordedList");
 
     my $status;

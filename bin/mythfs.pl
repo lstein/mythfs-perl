@@ -411,6 +411,7 @@ sub list_patterns_and_die {
 __END__
 The following substitution patterns can be used in recording paths.
 
+    %PLX = Fully formed path in format expected by Plex Media Server (use alone)
     %T   = Title (show name)
     %S   = Subtitle (episode name)
     %R   = Description
@@ -422,6 +423,9 @@ The following substitution patterns can be used in recording paths.
     %PI  = Program ID
     %SI  = Series ID
     %st  = Stars
+    %se  = Season
+    %e   = Episode
+    %see = Season & Episode in sXXeYY format
     %c   = Channel:  MythTV chanid
     %cn  = Channel:  channum
     %cc  = Channel:  callsign
