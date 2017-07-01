@@ -1,5 +1,8 @@
-1.35 Sat Jul  1 15:58:56 EDT 2017
+1.36 Sat Jul  1 15:58:56 EDT 2017
+    * Fixed %PLX substitution pattern to include AirDate in title as
+      well as Season/Episode.
 
+1.35 Sat Jul  1 15:58:56 EDT 2017
     * Added a %PLX substitution pattern to create a hierarchy of
       directories that follows Plex Media Service's filenaming
       conventions

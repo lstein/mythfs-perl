@@ -162,7 +162,7 @@ use constant Templates => {
           $r .= "$recording->{Title}/";
           if ($recording->{Season}) {
              $r .= "Season $recording->{Season}/";
-             $r .= sprintf("%s - s%02de%02d - %s",$recording->{Title},$recording->{Season},$recording->{Episode});
+             $r .= sprintf("%s - s%02de%02d - %s",$recording->{Title},$recording->{Season},$recording->{Episode},$recording->{Airdate});
              $r .= " - $recording->{SubTitle}" if defined $recording->{SubTitle};
           } else {
              my ($heuristic_season) = $recording->{SubTitle} =~ /(?:Season|Series)\s+(\d+)/;
