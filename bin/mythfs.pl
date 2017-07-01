@@ -51,6 +51,34 @@ is "%T/%S", the recording title followed by the subtitle.  Run this
 command with "-p help" to get a list of all the substitution patterns
 recognized.
 
+A special pattern is %PLX, which is intended to be used on its own. It
+creates a hierarchy of directories and video files using the Plex
+Media Server filenaming conventions
+(https://support.plex.tv/hc/en-us/categories/200028098-Media-Preparation). Example
+of its usage is as follows:
+
+  % mythfs.pl -p %PLX MyBackEndHost /tmp/mythfs
+  % ls -r /tmp/mythfs
+    /tmp/mythfs:
+    Movies  STATUS  TV Shows  UPCOMING
+
+   /tmp/mythfs/Movies:
+   District 9 (2009)       House of Flying Daggers (2004)     Pitch Perfect (2012) 
+   Happy Go Lovely (1951)  Made for Each Other (1939)         Some Like It Hot (1959)
+   Henry V (1945)          Mad Max Beyond Thunderdome (1985)  Stardust (2007)
+   His Girl Friday (1940)  Perfect Alibi (1994)               The Breakfast Club (1985)
+   ...
+   /tmp/mythfs/TV Shows/Orphan Black:
+   Season 3   Season 4
+  
+   /tmp/mythfs/TV Shows/Orphan Black/Season 3:
+   Orphan Black - s03e01 - 2015-04-18 - The Weight of This Combination.mpg
+   ...
+
+Note that where I live at least the on air EPG data is terrible and
+season/episode fields tend to be missing. This module uses various
+heuristics to compensate.
+
 By default, files will be streamed as needed from the MythTV
 backend. However, if the recording files are accessible directly from
 the filesystem (e.g. via an NFS mount), you can provide the path to
