@@ -39,7 +39,7 @@ use constant MARKER_FILE=> '.fuse-mythfs';
 use constant STATUS_FILE=> 'STATUS';
 use constant UPCOMING_FILE=> 'UPCOMING';
 
-our $VERSION = '1.35';
+our $VERSION = '1.36';
 
 my $Package = __PACKAGE__;
 my ($Recorded,$Options);
