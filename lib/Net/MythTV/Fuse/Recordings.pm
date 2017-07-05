@@ -44,6 +44,7 @@ use Thread::Semaphore;
 use Config;
 use File::Basename ();
 use Carp 'croak';
+our $VERSION = '1.36';
 
 use constant CACHETIME => 60*5;  # 5 minutes
 use constant MAXGETS   => 8;     # allow 8 simultaneous http gets 
