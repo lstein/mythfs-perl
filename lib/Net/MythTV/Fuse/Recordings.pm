@@ -161,15 +161,23 @@ use constant Templates => {
        if ($ct eq 'series' || $ct eq 'tvshow' || $recording->{Season}) {
           $r .= 'TV Shows/';
           $r .= "$recording->{Title}/";
+          # because original airdate can be inaccurate if the seriesid is missing
+          my ($starttime) = $recording->{StartTime} =~ /^(\d+-\d+-\d+)/;
+          my $airdate;
+          if ($recording->{SeriesID}) {
+             $airdate = $recording->{Airdate};
+          } else {
+             $airdate = $starttime;
+          }
           if ($recording->{Season}) {
              $r .= "Season $recording->{Season}/";
-             $r .= sprintf("%s - s%02de%02d - %s",$recording->{Title},$recording->{Season},$recording->{Episode},$recording->{Airdate});
+             $r .= sprintf("%s - s%02de%02d - %s",$recording->{Title},$recording->{Season},$recording->{Episode},$airdate);
              $r .= " - $recording->{SubTitle}" if defined $recording->{SubTitle};
           } else {
              my ($heuristic_season) = $recording->{SubTitle} =~ /(?:Season|Series)\s+(\d+)/;
-             ($heuristic_season)    = $recording->{Airdate} =~ /^(\d+)/ unless $heuristic_season; # year instead of season
+             ($heuristic_season)    = $airdate =~ /^(\d+)/ unless $heuristic_season; # year instead of season
              $heuristic_season    ||= '00';
-             $r .= "Season $heuristic_season/$recording->{Title} - $recording->{Airdate}";
+             $r .= "Season $heuristic_season/$recording->{Title} - $airdate";
              $r .= " - $recording->{SubTitle}" if $recording->{SubTitle};
           }
        } else {
