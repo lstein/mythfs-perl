@@ -16,7 +16,7 @@ my $test_xml = "gunzip -c $Bin/data/dummy_xml.gz|";
 my $mount    = tempdir(CLEANUP=>1);
 my $script   = "$Bin/../blib/script/mythfs.pl";
 
-my $result = system 'perl','-I',"$Bin/../blib/lib",$script,"--XML=$test_xml",'dummy_host',$mount;
+my $result = system $^X,'-I',"$Bin/../blib/lib",$script,"--XML=$test_xml",'dummy_host',$mount;
 is($result,0,'mount script ran ok');
 wait_for_mount($mount,20);
 ok(-d  $mount,              "mountpoint exists");
@@ -45,7 +45,7 @@ $result    = system 'fusermount','-u',$mount;
 is($result,0,'fusermount ran ok');
 
 # mount with special pattern
-$result = system $script,"--XML=$test_xml",'-p=%C/%T:%S','--trim=:','dummy_host',$mount;
+$result = system $^X,$script,"--XML=$test_xml",'-p=%C/%T:%S','--trim=:','dummy_host',$mount;
 is($result,0,'mount script ran ok');
 wait_for_mount($mount,20);
 
